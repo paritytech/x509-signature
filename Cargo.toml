@@ -1,0 +1,11 @@
+[package]
+name = "x509-signature"
+version = "0.1.0"
+authors = ["Parity Technologies <admin@parity.io>"]
+edition = "2018"
+license = "ISC"
+
+[dependencies]
+ring = "0.16.12"
+untrusted = "0.7.0"
+rustls = "0.17.0"
