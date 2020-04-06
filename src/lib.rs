@@ -300,18 +300,22 @@ pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a
 fn get_public_key_tls<'a>(
     public_key_algorithm: &[u8], x509_pkey_bytes: &'a [u8], signature_scheme: SignatureScheme,
 ) -> Result<ring::signature::UnparsedPublicKey<&'a [u8]>, Error> {
+    #[cfg(feature = "rsa")]
     use signature::{
         RSA_PKCS1_2048_8192_SHA256, RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512,
     };
     let algorithm: &'static dyn signature::VerificationAlgorithm = match signature_scheme {
+        #[cfg(feature = "rsa")]
         SignatureScheme::RSA_PKCS1_SHA256 => match public_key_algorithm {
             include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA256,
             _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
         },
+        #[cfg(feature = "rsa")]
         SignatureScheme::RSA_PKCS1_SHA384 => match public_key_algorithm {
             include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA384,
             _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
         },
+        #[cfg(feature = "rsa")]
         SignatureScheme::RSA_PKCS1_SHA512 => match public_key_algorithm {
             include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA512,
             _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
@@ -330,14 +334,17 @@ fn get_public_key_tls<'a>(
             include_bytes!("data/alg-ed25519.der") => &signature::ED25519,
             _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
         },
+        #[cfg(feature = "rsa")]
         SignatureScheme::RSA_PSS_SHA256 => match public_key_algorithm {
             include_bytes!("data/alg-rsa-encryption.der") => &signature::RSA_PSS_2048_8192_SHA256,
             _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
         },
+        #[cfg(feature = "rsa")]
         SignatureScheme::RSA_PSS_SHA384 => match public_key_algorithm {
             include_bytes!("data/alg-rsa-encryption.der") => &signature::RSA_PSS_2048_8192_SHA384,
             _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
         },
+        #[cfg(feature = "rsa")]
         SignatureScheme::RSA_PSS_SHA512 => match public_key_algorithm {
             include_bytes!("data/alg-rsa-encryption.der") => &signature::RSA_PSS_2048_8192_SHA512,
             _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
@@ -353,19 +360,24 @@ fn get_public_key_tls<'a>(
 fn get_public_key_x509<'a>(
     public_key_algorithm: &[u8], public_key_bytes: &'a [u8], signature_algorithm: &[u8],
 ) -> Result<ring::signature::UnparsedPublicKey<&'a [u8]>, Error> {
+    #[cfg(feature = "rsa")]
     const RSASSA_PSS_PREFIX: &[u8; 11] = include_bytes!("data/alg-rsa-pss.der");
+    #[cfg(feature = "rsa")]
     use signature::{
         RSA_PKCS1_2048_8192_SHA256, RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512,
     };
     let algorithm: &'static dyn signature::VerificationAlgorithm = match signature_algorithm {
+        #[cfg(feature = "rsa")]
         include_bytes!("data/alg-rsa-pkcs1-sha256.der") => match public_key_algorithm {
             include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA256,
             _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
         },
+        #[cfg(feature = "rsa")]
         include_bytes!("data/alg-rsa-pkcs1-sha384.der") => match public_key_algorithm {
             include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA384,
             _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
         },
+        #[cfg(feature = "rsa")]
         include_bytes!("data/alg-rsa-pkcs1-sha512.der") => match public_key_algorithm {
             include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA512,
             _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
@@ -384,6 +396,7 @@ fn get_public_key_x509<'a>(
             include_bytes!("data/alg-ed25519.der") => &signature::ED25519,
             _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
         },
+        #[cfg(feature = "rsa")]
         e if e.starts_with(&RSASSA_PSS_PREFIX[..]) => {
             let alg = parse_rsa_pss(&e[RSASSA_PSS_PREFIX.len()..])?;
             match public_key_algorithm {
@@ -402,6 +415,7 @@ fn get_public_key_x509<'a>(
 // While the RSA-PSS parameters are a ASN.1 SEQUENCE, it is simpler to match
 // against the 12 different possibilities. The binary files are *generated* by a
 // Go program.
+#[cfg(feature = "rsa")]
 fn parse_rsa_pss(data: &[u8]) -> Result<&'static signature::RsaParameters, Error> {
     match data {
         include_bytes!("data/alg-rsa-pss-sha256-v0.der")
