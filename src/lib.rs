@@ -100,7 +100,6 @@ mod calendar;
 mod das;
 mod der;
 mod sequence;
-mod time;
 pub use das::DataAlgorithmSignature;
 use ring::{error::Unspecified, signature};
 pub use sequence::ExtensionIterator;
