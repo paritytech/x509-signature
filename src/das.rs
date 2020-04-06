@@ -19,14 +19,21 @@ use ring::{error::Unspecified, io::der};
 /// A data-algorithm-signature structure
 #[derive(Debug)]
 pub struct DataAlgorithmSignature<'a> {
+    data: &'a [u8],
+    inner: &'a [u8],
+    algorithm: &'a [u8],
+    signature: &'a [u8],
+}
+
+impl<'a> DataAlgorithmSignature<'a> {
     /// The data over which the signature is computed.  An X.509 SEQUENCE.
-    pub data: untrusted::Input<'a>,
+    pub fn data(&self) -> &'a [u8] { self.data }
     /// The data with the outer SEQUENCE stripped.
-    pub inner: untrusted::Input<'a>,
+    pub fn inner(&self) -> &'a [u8] { self.inner }
     /// The algorithm identifier, with the outer SEQUENCE stripped.
-    pub algorithm: untrusted::Input<'a>,
+    pub fn algorithm(&self) -> &'a [u8] { self.algorithm }
     /// The raw bytes of the signature.
-    pub signature: untrusted::Input<'a>,
+    pub fn signature(&self) -> &'a [u8] { self.signature }
 }
 
 #[inline(always)]
@@ -44,12 +51,12 @@ impl<'a> core::convert::TryFrom<&'a [u8]> for DataAlgorithmSignature<'a> {
                 // tbsCertificate
                 let (data, inner) = input.read_partial(read_sequence)?;
                 // signatureAlgorithm
-                let algorithm = read_sequence(input)?;
+                let algorithm = read_sequence(input)?.as_slice_less_safe();
                 // signatureValue
-                let signature = der::bit_string_with_no_unused_bits(input)?;
+                let signature = der::bit_string_with_no_unused_bits(input)?.as_slice_less_safe();
                 Ok(Self {
-                    data,
-                    inner,
+                    data: data.as_slice_less_safe(),
+                    inner: inner.as_slice_less_safe(),
                     algorithm,
                     signature,
                 })

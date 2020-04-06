@@ -48,7 +48,6 @@
     exceeding_bitshifts,
     invalid_type_param_default,
     missing_fragment_specifier,
-    mutable_transmutes,
     no_mangle_const_items,
     overflowing_literals,
     patterns_in_fns_without_body,
@@ -69,7 +68,6 @@
     stable_features,
     type_alias_bounds,
     tyvar_behind_raw_pointer,
-    unconditional_recursion,
     unused,
     unused_allocation,
     unused_comparisons,
@@ -88,6 +86,8 @@
     clippy::all
 )]
 #![forbid(
+    mutable_transmutes,
+    unconditional_recursion,
     unsafe_code,
     intra_doc_link_resolution_failure,
     safe_packed_borrows,
@@ -100,9 +100,11 @@ mod calendar;
 mod das;
 mod der;
 mod sequence;
+mod spki;
 pub use das::DataAlgorithmSignature;
-use ring::{error::Unspecified, signature};
+use ring::error::Unspecified;
 pub use sequence::ExtensionIterator;
+pub use spki::SubjectPublicKeyInfo;
 
 #[cfg(feature = "rustls")]
 pub use r::SignatureScheme;
@@ -172,28 +174,23 @@ pub use w::Error;
 #[derive(Debug)]
 pub struct X509Certificate<'a> {
     /// The tbsCertificate, signatureAlgorithm, and signature
-    pub das: DataAlgorithmSignature<'a>,
+    das: DataAlgorithmSignature<'a>,
     /// The serial number.  Big-endian and non-empty.
-    pub serial: &'a [u8],
+    serial: &'a [u8],
     /// Iterator over the elements of the issuer
-    pub issuer: untrusted::Input<'a>,
+    issuer: untrusted::Input<'a>,
     /// The earliest time, in seconds since the Unix epoch, that the certificate
     /// is valid
-    pub not_before: u64,
+    not_before: u64,
     /// The latest time, in seconds since the Unix epoch, that the certificate
     /// is valid
-    pub not_after: u64,
+    not_after: u64,
     /// Iterator over the elements of the subject
-    pub subject: untrusted::Input<'a>,
+    subject: &'a [u8],
     /// The subjectPublicKeyInfo, in the format used by OpenSSL
-    pub subject_public_key_info: untrusted::Input<'a>,
-    /// The public key’s algorithm identifier, with the wrapping DER SEQUENCE
-    /// stripped off
-    pub public_key_algorithm_id: untrusted::Input<'a>,
-    /// The raw public key, in bytes
-    pub public_key_bytes: untrusted::Input<'a>,
+    subject_public_key_info: SubjectPublicKeyInfo<'a>,
     /// An iterator over the certificate’s extensions
-    pub extensions: ExtensionIterator<'a>,
+    extensions: ExtensionIterator<'a>,
 }
 
 impl X509Certificate<'_> {
@@ -206,13 +203,10 @@ impl X509Certificate<'_> {
         } else if time > self.not_after {
             return Err(Error::CertExpired);
         }
-        get_public_key_tls(
-            self.public_key_algorithm_id.as_slice_less_safe(),
-            self.public_key_bytes.as_slice_less_safe(),
-            scheme,
-        )?
-        .verify(message, signature)
-        .map_err(|_| Error::InvalidSignatureForPublicKey)
+        self.subject_public_key_info
+            .get_public_key_tls(scheme)?
+            .verify(message, signature)
+            .map_err(|_| Error::InvalidSignatureForPublicKey)
     }
 
     /// Verify a signature made by the certificate
@@ -224,62 +218,58 @@ impl X509Certificate<'_> {
         } else if time > self.not_after {
             return Err(Error::CertExpired);
         }
-        get_public_key_x509(
-            self.public_key_algorithm_id.as_slice_less_safe(),
-            self.public_key_bytes.as_slice_less_safe(),
-            das.algorithm.as_slice_less_safe(),
-        )?
-        .verify(
-            das.data.as_slice_less_safe(),
-            das.signature.as_slice_less_safe(),
-        )
-        .map_err(|_| Error::InvalidSignatureForPublicKey)
+        self.subject_public_key_info
+            .get_public_key_x509(das.algorithm())?
+            .verify(das.data(), das.signature())
+            .map_err(|_| Error::InvalidSignatureForPublicKey)
     }
-}
 
-#[inline(always)]
-fn read_bit_string<'a>(
-    input: &mut untrusted::Reader<'a>, e: Error,
-) -> Result<untrusted::Input<'a>, Error> {
-    der::bit_string_with_no_unused_bits(input).map_err(|_| e)
+    /// Verify a signature made by the certificate
+    pub fn verify_certificate_signature(
+        &self, time: u64, das: &DataAlgorithmSignature<'_>,
+    ) -> Result<(), Error> {
+        if time < self.not_before {
+            return Err(Error::CertNotValidYet);
+        } else if time > self.not_after {
+            return Err(Error::CertExpired);
+        }
+        self.subject_public_key_info
+            .get_public_key_x509(das.algorithm())?
+            .verify(das.data(), das.signature())
+            .map_err(|_| Error::InvalidSignatureForPublicKey)
+    }
 }
 
 /// Extracts the algorithm id and public key from a certificate
 pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a>, Error> {
     use core::convert::TryFrom as _;
     let das = DataAlgorithmSignature::try_from(certificate).map_err(|Unspecified| Error::BadDER)?;
-    das.inner.clone().read_all(Error::BadDER, |input| {
+    untrusted::Input::from(&*das.inner()).read_all(Error::BadDER, |input| {
         // We require extensions, which means we require version 3
         der::expect_bytes(input, &[160, 3, 2, 1, 2], Error::UnsupportedCertVersion)?;
         // serialNumber
         let serial = der::positive_integer(input)?.big_endian_without_leading_zero();
         // signature
-        if der::expect_tag_and_get_value(input, der::Tag::Sequence)? != das.algorithm {
+        if der::expect_tag_and_get_value(input, der::Tag::Sequence)?.as_slice_less_safe()
+            != das.algorithm()
+        {
             // signature algorithms don’t match
             return Err(Error::SignatureAlgorithmMismatch);
         }
         // issuer
         let issuer = der::expect_tag_and_get_value(input, der::Tag::Sequence)?;
         // validity
-        let (not_before, not_after) = der::expect_tag_and_get_value(input, der::Tag::Sequence)?
-            .read_all(Error::BadDER, |input| {
+        let (not_before, not_after) =
+            der::nested(input, der::Tag::Sequence, Error::BadDER, |input| {
                 Ok((der::time_choice(input)?, der::time_choice(input)?))
             })?;
         if not_before > not_after {
             return Err(Error::InvalidCertValidity);
         }
-        // subject
-        let subject = der::expect_tag_and_get_value(input, der::Tag::Sequence)?;
-        // subjectPublicKeyInfo
-        let subject_public_key_info = der::expect_tag_and_get_value(input, der::Tag::Sequence)?;
-        let (public_key_algorithm_id, public_key_bytes) =
-            subject_public_key_info.read_all(Error::BadDER, |input| {
-                let algorithm = der::expect_tag_and_get_value(input, der::Tag::Sequence)?;
-                let public_key = read_bit_string(input, Error::BadDER)?;
-                Ok((algorithm, public_key))
-            })?;
+        let subject =
+            der::expect_tag_and_get_value(input, der::Tag::Sequence)?.as_slice_less_safe();
+        let subject_public_key_info = SubjectPublicKeyInfo::read(input)?;
         // subjectUniqueId and issuerUniqueId are unsupported
-        // parse the extensions
         let extensions = ExtensionIterator::read(input)?;
 
         Ok(X509Certificate {
@@ -290,154 +280,9 @@ pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a
             not_after,
             issuer,
             subject_public_key_info,
-            public_key_algorithm_id,
-            public_key_bytes,
             extensions,
         })
     })
-}
-
-fn get_public_key_tls<'a>(
-    public_key_algorithm: &[u8], x509_pkey_bytes: &'a [u8], signature_scheme: SignatureScheme,
-) -> Result<ring::signature::UnparsedPublicKey<&'a [u8]>, Error> {
-    #[cfg(feature = "rsa")]
-    use signature::{
-        RSA_PKCS1_2048_8192_SHA256, RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512,
-    };
-    let algorithm: &'static dyn signature::VerificationAlgorithm = match signature_scheme {
-        #[cfg(feature = "rsa")]
-        SignatureScheme::RSA_PKCS1_SHA256 => match public_key_algorithm {
-            include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA256,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        #[cfg(feature = "rsa")]
-        SignatureScheme::RSA_PKCS1_SHA384 => match public_key_algorithm {
-            include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA384,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        #[cfg(feature = "rsa")]
-        SignatureScheme::RSA_PKCS1_SHA512 => match public_key_algorithm {
-            include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA512,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        SignatureScheme::ECDSA_NISTP256_SHA256 => match public_key_algorithm {
-            include_bytes!("data/alg-ecdsa-p256.der") => &signature::ECDSA_P256_SHA256_ASN1,
-            // include_bytes!("data/alg-ecdsa-p384.der") => &signature::ECDSA_P384_SHA256_ASN1,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        SignatureScheme::ECDSA_NISTP384_SHA384 => match public_key_algorithm {
-            include_bytes!("data/alg-ecdsa-p384.der") => &signature::ECDSA_P384_SHA384_ASN1,
-            // include_bytes!("data/alg-ecdsa-p256.der") => &signature::ECDSA_P256_SHA384_ASN1,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        SignatureScheme::ED25519 => match public_key_algorithm {
-            include_bytes!("data/alg-ed25519.der") => &signature::ED25519,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        #[cfg(feature = "rsa")]
-        SignatureScheme::RSA_PSS_SHA256 => match public_key_algorithm {
-            include_bytes!("data/alg-rsa-encryption.der") => &signature::RSA_PSS_2048_8192_SHA256,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        #[cfg(feature = "rsa")]
-        SignatureScheme::RSA_PSS_SHA384 => match public_key_algorithm {
-            include_bytes!("data/alg-rsa-encryption.der") => &signature::RSA_PSS_2048_8192_SHA384,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        #[cfg(feature = "rsa")]
-        SignatureScheme::RSA_PSS_SHA512 => match public_key_algorithm {
-            include_bytes!("data/alg-rsa-encryption.der") => &signature::RSA_PSS_2048_8192_SHA512,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        _ => return Err(Error::UnsupportedSignatureAlgorithm),
-    };
-    Ok(signature::UnparsedPublicKey::new(
-        algorithm,
-        x509_pkey_bytes,
-    ))
-}
-
-fn get_public_key_x509<'a>(
-    public_key_algorithm: &[u8], public_key_bytes: &'a [u8], signature_algorithm: &[u8],
-) -> Result<ring::signature::UnparsedPublicKey<&'a [u8]>, Error> {
-    #[cfg(feature = "rsa")]
-    const RSASSA_PSS_PREFIX: &[u8; 11] = include_bytes!("data/alg-rsa-pss.der");
-    #[cfg(feature = "rsa")]
-    use signature::{
-        RSA_PKCS1_2048_8192_SHA256, RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512,
-    };
-    let algorithm: &'static dyn signature::VerificationAlgorithm = match signature_algorithm {
-        #[cfg(feature = "rsa")]
-        include_bytes!("data/alg-rsa-pkcs1-sha256.der") => match public_key_algorithm {
-            include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA256,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        #[cfg(feature = "rsa")]
-        include_bytes!("data/alg-rsa-pkcs1-sha384.der") => match public_key_algorithm {
-            include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA384,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        #[cfg(feature = "rsa")]
-        include_bytes!("data/alg-rsa-pkcs1-sha512.der") => match public_key_algorithm {
-            include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA512,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        include_bytes!("data/alg-ecdsa-sha256.der") => match public_key_algorithm {
-            include_bytes!("data/alg-ecdsa-p256.der") => &signature::ECDSA_P256_SHA256_ASN1,
-            include_bytes!("data/alg-ecdsa-p384.der") => &signature::ECDSA_P384_SHA256_ASN1,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        include_bytes!("data/alg-ecdsa-sha384.der") => match public_key_algorithm {
-            include_bytes!("data/alg-ecdsa-p256.der") => &signature::ECDSA_P256_SHA384_ASN1,
-            include_bytes!("data/alg-ecdsa-p384.der") => &signature::ECDSA_P384_SHA384_ASN1,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        include_bytes!("data/alg-ed25519.der") => match public_key_algorithm {
-            include_bytes!("data/alg-ed25519.der") => &signature::ED25519,
-            _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-        },
-        #[cfg(feature = "rsa")]
-        e if e.starts_with(&RSASSA_PSS_PREFIX[..]) => {
-            let alg = parse_rsa_pss(&e[RSASSA_PSS_PREFIX.len()..])?;
-            match public_key_algorithm {
-                include_bytes!("data/alg-rsa-encryption.der") => alg,
-                _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-            }
-        }
-        _ => return Err(Error::UnsupportedSignatureAlgorithm),
-    };
-    Ok(signature::UnparsedPublicKey::new(
-        algorithm,
-        public_key_bytes,
-    ))
-}
-
-// While the RSA-PSS parameters are a ASN.1 SEQUENCE, it is simpler to match
-// against the 12 different possibilities. The binary files are *generated* by a
-// Go program.
-#[cfg(feature = "rsa")]
-fn parse_rsa_pss(data: &[u8]) -> Result<&'static signature::RsaParameters, Error> {
-    match data {
-        include_bytes!("data/alg-rsa-pss-sha256-v0.der")
-        | include_bytes!("data/alg-rsa-pss-sha256-v1.der")
-        | include_bytes!("data/alg-rsa-pss-sha256-v2.der")
-        | include_bytes!("data/alg-rsa-pss-sha256-v3.der") => {
-            Ok(&signature::RSA_PSS_2048_8192_SHA256)
-        }
-        include_bytes!("data/alg-rsa-pss-sha384-v0.der")
-        | include_bytes!("data/alg-rsa-pss-sha384-v1.der")
-        | include_bytes!("data/alg-rsa-pss-sha384-v2.der")
-        | include_bytes!("data/alg-rsa-pss-sha384-v3.der") => {
-            Ok(&signature::RSA_PSS_2048_8192_SHA384)
-        }
-        include_bytes!("data/alg-rsa-pss-sha512-v0.der")
-        | include_bytes!("data/alg-rsa-pss-sha512-v1.der")
-        | include_bytes!("data/alg-rsa-pss-sha512-v2.der")
-        | include_bytes!("data/alg-rsa-pss-sha512-v3.der") => {
-            Ok(&signature::RSA_PSS_2048_8192_SHA512)
-        }
-        _ => Err(Error::UnsupportedSignatureAlgorithm),
-    }
 }
 
 #[cfg(test)]
@@ -453,10 +298,10 @@ mod tests {
 
         let cert = parse_certificate(certificate).unwrap();
         assert_eq!(
-            cert.public_key_algorithm_id.as_slice_less_safe(),
+            cert.subject_public_key_info.algorithm(),
             include_bytes!("data/alg-ecdsa-p256.der")
         );
-        assert_eq!(cert.public_key_bytes.len(), 65);
+        assert_eq!(cert.subject_public_key_info.key().len(), 65);
         cert.verify_signature_against_scheme(
             1586128701,
             SignatureScheme::ECDSA_NISTP256_SHA256,
@@ -481,7 +326,7 @@ mod tests {
                 message,
                 invalid_signature,
             )
-            .expect_err("corrupting a signature invalidates it"),
+            .expect_err("corrupting a message invalidates it"),
             Error::InvalidSignatureForPublicKey
         );
         assert_eq!(
