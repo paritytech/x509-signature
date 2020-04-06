@@ -8,4 +8,9 @@ license = "ISC"
 [dependencies]
 ring = "0.16.12"
 untrusted = "0.7.0"
-rustls = "0.17.0"
+w = { package = "webpki", version = "0.21.2", optional = true }
+r = { package = "rustls", version = "0.17.0", optional = true }
+
+[features]
+webpki = ["w"]
+rustls = ["r"]

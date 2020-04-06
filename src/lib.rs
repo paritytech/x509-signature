@@ -105,7 +105,7 @@ use ring::{error::Unspecified, signature};
 pub use sequence::ExtensionIterator;
 
 #[cfg(feature = "rustls")]
-pub use rustls::SignatureScheme;
+pub use r::SignatureScheme;
 
 /// A signature scheme supported by this library
 #[cfg(not(feature = "rustls"))]
@@ -135,7 +135,7 @@ pub enum SignatureScheme {
     ED448,
 }
 
-#[cfg(not(feature = "webpki-error"))]
+#[cfg(not(feature = "webpki"))]
 /// Errors that can be produced when parsing a certificate or validating a
 /// signature.
 ///
@@ -165,8 +165,8 @@ pub enum Error {
     InvalidCertValidity,
 }
 
-#[cfg(feature = "webpki-error")]
-pub use webpki::Error;
+#[cfg(feature = "webpki")]
+pub use w::Error;
 
 /// A parsed (but not validated) X.509 version 3 certificate.
 #[derive(Debug)]
