@@ -22,7 +22,7 @@ use super::{
 use ring::signature;
 
 /// A PKIX SubjectPublicKeyInfo struct
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct SubjectPublicKeyInfo<'a> {
     spki: &'a [u8],
     algorithm: &'a [u8],

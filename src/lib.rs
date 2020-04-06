@@ -103,7 +103,7 @@ mod sequence;
 mod spki;
 pub use das::DataAlgorithmSignature;
 use ring::error::Unspecified;
-pub use sequence::ExtensionIterator;
+pub use sequence::{ExtensionIterator, SequenceIterator};
 pub use spki::SubjectPublicKeyInfo;
 
 #[cfg(feature = "rustls")]
@@ -173,27 +173,37 @@ pub use w::Error;
 /// A parsed (but not validated) X.509 version 3 certificate.
 #[derive(Debug)]
 pub struct X509Certificate<'a> {
-    /// The tbsCertificate, signatureAlgorithm, and signature
     das: DataAlgorithmSignature<'a>,
-    /// The serial number.  Big-endian and non-empty.
     serial: &'a [u8],
-    /// Iterator over the elements of the issuer
-    issuer: untrusted::Input<'a>,
-    /// The earliest time, in seconds since the Unix epoch, that the certificate
-    /// is valid
+    issuer: &'a [u8],
     not_before: u64,
-    /// The latest time, in seconds since the Unix epoch, that the certificate
-    /// is valid
     not_after: u64,
-    /// Iterator over the elements of the subject
     subject: &'a [u8],
-    /// The subjectPublicKeyInfo, in the format used by OpenSSL
     subject_public_key_info: SubjectPublicKeyInfo<'a>,
-    /// An iterator over the certificate’s extensions
     extensions: ExtensionIterator<'a>,
 }
 
-impl X509Certificate<'_> {
+impl<'a> X509Certificate<'a> {
+    /// The tbsCertificate, signatureAlgorithm, and signature
+    pub fn das(&self) -> DataAlgorithmSignature<'a> { self.das }
+    /// The serial number.  Big-endian and non-empty.
+    pub fn serial(&self) -> &'a [u8] { self.serial }
+    /// X.509 issuer
+    pub fn issuer(&self) -> &'a [u8] { self.issuer }
+    /// The earliest time, in seconds since the Unix epoch, that the certificate
+    /// is valid
+    pub fn not_before(&self) -> u64 { self.not_before }
+    /// The latest time, in seconds since the Unix epoch, that the certificate
+    /// is valid
+    pub fn not_after(&self) -> u64 { self.not_after }
+    /// X.509 subject
+    pub fn subject(&self) -> &'a [u8] { self.subject }
+    /// The subjectPublicKeyInfo, in the format used by OpenSSL
+    pub fn subject_public_key_info(&self) -> SubjectPublicKeyInfo<'a> {
+        self.subject_public_key_info
+    }
+    /// An iterator over the certificate’s extensions
+    pub fn extensions(&self) -> ExtensionIterator<'a> { self.extensions }
     /// Verify a signature made by the certificate
     pub fn verify_signature_against_scheme(
         &self, time: u64, scheme: SignatureScheme, message: &[u8], signature: &[u8],
@@ -257,7 +267,7 @@ pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a
             return Err(Error::SignatureAlgorithmMismatch);
         }
         // issuer
-        let issuer = der::expect_tag_and_get_value(input, der::Tag::Sequence)?;
+        let issuer = der::expect_tag_and_get_value(input, der::Tag::Sequence)?.as_slice_less_safe();
         // validity
         let (not_before, not_after) =
             der::nested(input, der::Tag::Sequence, Error::BadDER, |input| {
@@ -270,7 +280,7 @@ pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a
             der::expect_tag_and_get_value(input, der::Tag::Sequence)?.as_slice_less_safe();
         let subject_public_key_info = SubjectPublicKeyInfo::read(input)?;
         // subjectUniqueId and issuerUniqueId are unsupported
-        let extensions = ExtensionIterator::read(input)?;
+        let extensions = ExtensionIterator(SequenceIterator::read(input)?);
 
         Ok(X509Certificate {
             das,

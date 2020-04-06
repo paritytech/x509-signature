@@ -17,7 +17,7 @@
 use ring::{error::Unspecified, io::der};
 
 /// A data-algorithm-signature structure
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct DataAlgorithmSignature<'a> {
     data: &'a [u8],
     inner: &'a [u8],
