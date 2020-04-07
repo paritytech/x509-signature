@@ -32,13 +32,8 @@ pub struct SequenceIterator<'a> {
 
 impl<'a> SequenceIterator<'a> {
     /// Read X.509 extensions from an [`untrusted::Reader`].
-    pub fn read(input: &mut untrusted::Reader<'a>) -> Result<Self, Error> {
-        let tag = der::Tag::ContextSpecificConstructed3;
-        der::expect_tag_and_get_value(input, tag)?.read_all(Error::BadDER, |input| {
-            Ok(Self {
-                inner: der::expect_tag_and_get_value(input, der::Tag::Sequence)?,
-            })
-        })
+    pub fn read(input: &mut untrusted::Reader<'a>) -> Self {
+        Self { inner: input.read_bytes_to_end() }
     }
 
     /// Iterate over the X.509 extensions.  The callback is expected to read the

@@ -280,7 +280,22 @@ pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a
             der::expect_tag_and_get_value(input, der::Tag::Sequence)?.as_slice_less_safe();
         let subject_public_key_info = SubjectPublicKeyInfo::read(input)?;
         // subjectUniqueId and issuerUniqueId are unsupported
-        let extensions = ExtensionIterator(SequenceIterator::read(input)?);
+
+        let extensions = if input.at_end() {
+            let tag = der::Tag::ContextSpecificConstructed3;
+            der::nested(input, tag, Error::BadDER, |input| {
+                der::nested(input, der::Tag::Sequence, Error::BadDER, |input| {
+                    if input.at_end() {
+                        return Err(Error::BadDER);
+                    }
+                    Ok(ExtensionIterator(SequenceIterator::read(
+                        input,
+                    )))
+                })
+            })
+        } else {
+            Ok(ExtensionIterator(SequenceIterator::read(input)))
+        }?;
 
         Ok(X509Certificate {
             das,
