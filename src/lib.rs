@@ -281,7 +281,7 @@ pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a
         let subject_public_key_info = SubjectPublicKeyInfo::read(input)?;
         // subjectUniqueId and issuerUniqueId are unsupported
 
-        let extensions = if input.at_end() {
+        let extensions = if !input.at_end() {
             let tag = der::Tag::ContextSpecificConstructed3;
             der::nested(input, tag, Error::BadDER, |input| {
                 der::nested(input, der::Tag::Sequence, Error::BadDER, |input| {
