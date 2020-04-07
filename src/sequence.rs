@@ -28,19 +28,23 @@ pub struct ExtensionIterator<'a>(pub(crate) SequenceIterator<'a>);
 #[derive(Debug, Copy, Clone)]
 pub struct SequenceIterator<'a> {
     inner: untrusted::Input<'a>,
+    tag: u8,
 }
 
 impl<'a> SequenceIterator<'a> {
-    /// Read X.509 extensions from an [`untrusted::Reader`].
-    pub fn read(input: &mut untrusted::Reader<'a>) -> Self {
+    /// Read a sequence of X.509 items with tag `tag` from an
+    /// [`untrusted::Reader`].
+    pub fn read(input: &mut untrusted::Reader<'a>, tag: u8) -> Self {
         Self {
             inner: input.read_bytes_to_end(),
+            tag,
         }
     }
 
-    /// Iterate over the X.509 extensions.  The callback is expected to read the
+    /// Iterate over the X.509 items.  The callback is expected to read the
     /// provided [`untrusted::Reader`] to the end; if it does not, or if the
-    /// DER isn’t a sequence of sequences, `Err(error)` will be returned.
+    /// items in the sequence do not have tag `tag`, `Err(error)` will be
+    /// returned.
     pub fn iterate<
         E: Copy + core::fmt::Debug,
         T: FnMut(&mut untrusted::Reader<'a>) -> Result<(), E>,
@@ -49,7 +53,12 @@ impl<'a> SequenceIterator<'a> {
     ) -> Result<(), E> {
         self.inner.read_all(error, |input| {
             while !input.at_end() {
-                der::nested(input, der::Tag::Sequence, error, &mut *cb)?
+                let (tag, value) =
+                    ring::io::der::read_tag_and_get_value(input).map_err(|_| error)?;
+                if tag != self.tag {
+                    return Err(error);
+                }
+                value.read_all(error, &mut *cb)?
             }
             Ok(())
         })
@@ -58,7 +67,7 @@ impl<'a> SequenceIterator<'a> {
 
 impl<'a> ExtensionIterator<'a> {
     /// Iterate over the X.509 extensions.
-    pub fn iterate<T: FnMut(&'a [u8], bool, untrusted::Input<'a>) -> Result<(), Error>>(
+    pub fn iterate<T: FnMut(&'a [u8], bool, &mut untrusted::Reader<'a>) -> Result<(), Error>>(
         &self, cb: &mut T,
     ) -> Result<(), Error> {
         self.0.iterate(Error::BadDER, &mut |input| {
@@ -75,8 +84,9 @@ impl<'a> ExtensionIterator<'a> {
                     _ => return Err(Error::BadDER),
                 }
             }
-            let value = der::expect_tag_and_get_value(input, der::Tag::OctetString)?;
-            cb(oid.as_slice_less_safe(), critical, value)
+            der::nested(input, der::Tag::OctetString, Error::BadDER, |value| {
+                cb(oid.as_slice_less_safe(), critical, value)
+            })
         })
     }
 }

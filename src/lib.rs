@@ -43,7 +43,7 @@
 //! of *ring* that require heap allocation, specifically RSA.  x509-signature
 //! should never panic on any input.
 
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![deny(
     exceeding_bitshifts,
     invalid_type_param_default,
@@ -165,6 +165,8 @@ pub enum Error {
     CertExpired,
     /// Certificate expired before beginning to be valid
     InvalidCertValidity,
+    /// Extension value is invalid
+    ExtensionValueInvalid,
 }
 
 #[cfg(feature = "webpki")]
@@ -175,10 +177,10 @@ pub use w::Error;
 pub struct X509Certificate<'a> {
     das: DataAlgorithmSignature<'a>,
     serial: &'a [u8],
-    issuer: &'a [u8],
+    issuer: SequenceIterator<'a>,
     not_before: u64,
     not_after: u64,
-    subject: &'a [u8],
+    subject: SequenceIterator<'a>,
     subject_public_key_info: SubjectPublicKeyInfo<'a>,
     extensions: ExtensionIterator<'a>,
 }
@@ -189,7 +191,7 @@ impl<'a> X509Certificate<'a> {
     /// The serial number.  Big-endian and non-empty.
     pub fn serial(&self) -> &'a [u8] { self.serial }
     /// X.509 issuer
-    pub fn issuer(&self) -> &'a [u8] { self.issuer }
+    pub fn issuer(&self) -> SequenceIterator<'a> { self.issuer }
     /// The earliest time, in seconds since the Unix epoch, that the certificate
     /// is valid
     pub fn not_before(&self) -> u64 { self.not_before }
@@ -197,7 +199,7 @@ impl<'a> X509Certificate<'a> {
     /// is valid
     pub fn not_after(&self) -> u64 { self.not_after }
     /// X.509 subject
-    pub fn subject(&self) -> &'a [u8] { self.subject }
+    pub fn subject(&self) -> SequenceIterator<'a> { self.subject }
     /// The subjectPublicKeyInfo, in the format used by OpenSSL
     pub fn subject_public_key_info(&self) -> SubjectPublicKeyInfo<'a> {
         self.subject_public_key_info
@@ -255,6 +257,7 @@ pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a
     use core::convert::TryFrom as _;
     let das = DataAlgorithmSignature::try_from(certificate).map_err(|Unspecified| Error::BadDER)?;
     untrusted::Input::from(&*das.inner()).read_all(Error::BadDER, |input| {
+        const SET: u8 = 0x11 | ring::io::der::CONSTRUCTED;
         // We require extensions, which means we require version 3
         der::expect_bytes(input, &[160, 3, 2, 1, 2], Error::UnsupportedCertVersion)?;
         // serialNumber
@@ -267,7 +270,9 @@ pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a
             return Err(Error::SignatureAlgorithmMismatch);
         }
         // issuer
-        let issuer = der::expect_tag_and_get_value(input, der::Tag::Sequence)?.as_slice_less_safe();
+        let issuer = der::nested(input, der::Tag::Sequence, Error::BadDER, |input| {
+            Ok(SequenceIterator::read(input, SET))
+        })?;
         // validity
         let (not_before, not_after) =
             der::nested(input, der::Tag::Sequence, Error::BadDER, |input| {
@@ -276,23 +281,30 @@ pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a
         if not_before > not_after {
             return Err(Error::InvalidCertValidity);
         }
-        let subject =
-            der::expect_tag_and_get_value(input, der::Tag::Sequence)?.as_slice_less_safe();
+        let subject = der::nested(input, der::Tag::Sequence, Error::BadDER, |input| {
+            Ok(SequenceIterator::read(input, SET))
+        })?;
         let subject_public_key_info = SubjectPublicKeyInfo::read(input)?;
         // subjectUniqueId and issuerUniqueId are unsupported
 
-        let extensions = if input.at_end() {
+        let extensions = if !input.at_end() {
             let tag = der::Tag::ContextSpecificConstructed3;
             der::nested(input, tag, Error::BadDER, |input| {
                 der::nested(input, der::Tag::Sequence, Error::BadDER, |input| {
                     if input.at_end() {
                         return Err(Error::BadDER);
                     }
-                    Ok(ExtensionIterator(SequenceIterator::read(input)))
+                    Ok(ExtensionIterator(SequenceIterator::read(
+                        input,
+                        der::Tag::Sequence as _,
+                    )))
                 })
             })
         } else {
-            Ok(ExtensionIterator(SequenceIterator::read(input)))
+            Ok(ExtensionIterator(SequenceIterator::read(
+                input,
+                der::Tag::Sequence as _,
+            )))
         }?;
 
         Ok(X509Certificate {
@@ -320,6 +332,56 @@ mod tests {
         let certificate = include_bytes!("../testing.crt");
 
         let cert = parse_certificate(certificate).unwrap();
+        let mut exts_reader: fn(&[u8], bool, &mut untrusted::Reader<'_>) -> Result<_, _> =
+            |oid: &[u8], critical: bool, input| {
+                match oid {
+                    // subjectKeyIdentifier
+                    [85, 29, 14] => {
+                        assert!(!critical);
+                        let _subject_key_id =
+                            der::expect_tag_and_get_value(input, der::Tag::OctetString).unwrap();
+                        return Ok(());
+                    },
+                    // basicConstraints
+                    [85, 29, 19] => {
+                        assert!(critical);
+                        der::nested(
+                            input,
+                            der::Tag::Sequence,
+                            Error::ExtensionValueInvalid,
+                            |input| {
+                                assert!(input.at_end());
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                        return Ok(());
+                    },
+                    // keyUsage
+                    [85, 29, 15] => {
+                        assert!(critical);
+                        assert_eq!(
+                            input.read_bytes_to_end().as_slice_less_safe(),
+                            &[der::Tag::BitString as _, 2, 6, 0xC0]
+                        );
+                        return Ok(());
+                    },
+                    _ => {},
+                }
+                der::nested(
+                    input,
+                    der::Tag::Sequence,
+                    Error::ExtensionValueInvalid,
+                    |input| {
+                        let _bytes = input.read_bytes_to_end().as_slice_less_safe();
+                        #[cfg(feature = "std")]
+                        println!("{:?}", _bytes);
+                        Ok(())
+                    },
+                )
+                .unwrap();
+                Ok(())
+            };
         assert_eq!(
             cert.subject_public_key_info.algorithm(),
             include_bytes!("data/alg-ecdsa-p256.der")
@@ -362,5 +424,12 @@ mod tests {
             .expect_err("forgery undetected?"),
             Error::InvalidSignatureForPublicKey
         );
+        cert.subject()
+            .iterate(Error::BadDER, &mut |e| Ok(drop(e.read_bytes_to_end())))
+            .unwrap();
+        cert.issuer()
+            .iterate(Error::BadDER, &mut |e| Ok(drop(e.read_bytes_to_end())))
+            .unwrap();
+        cert.extensions().iterate(&mut exts_reader).unwrap()
     }
 }
