@@ -103,7 +103,7 @@ use ring::io::der;
 mod spki;
 pub use das::DataAlgorithmSignature;
 pub use sequence::{ExtensionIterator, SequenceIterator};
-pub use spki::SubjectPublicKeyInfo;
+pub use spki::{parse_algorithmid, SubjectPublicKeyInfo};
 
 #[cfg(feature = "rustls")]
 pub use r::SignatureScheme;
@@ -185,37 +185,49 @@ pub struct X509Certificate<'a> {
 impl<'a> X509Certificate<'a> {
     /// The tbsCertificate, signatureAlgorithm, and signature
     pub fn das(&self) -> DataAlgorithmSignature<'a> { self.das }
+
     /// The serial number.  Big-endian and non-empty.
     pub fn serial(&self) -> &'a [u8] { self.serial }
+
     /// X.509 issuer
     pub fn issuer(&self) -> &'a [u8] { self.issuer }
+
     /// The earliest time, in seconds since the Unix epoch, that the certificate
     /// is valid
     pub fn not_before(&self) -> u64 { self.not_before }
+
     /// The latest time, in seconds since the Unix epoch, that the certificate
     /// is valid
     pub fn not_after(&self) -> u64 { self.not_after }
+
     /// X.509 subject
     pub fn subject(&self) -> &'a [u8] { self.subject }
+
     /// The subjectPublicKeyInfo, in the format used by OpenSSL
     pub fn subject_public_key_info(&self) -> SubjectPublicKeyInfo<'a> {
         self.subject_public_key_info
     }
+
     /// An iterator over the certificate’s extensions
     pub fn extensions(&self) -> ExtensionIterator<'a> { self.extensions }
-    /// Verify a signature made by the certificate
-    pub fn verify_signature_against_scheme(
-        &self, time: u64, scheme: SignatureScheme, message: &[u8], signature: &[u8],
+
+    /// Verify a signature made by the certificate.
+    pub fn check_signature(
+        &self, algorithm: SignatureScheme, message: &[u8], signature: &[u8],
     ) -> Result<(), Error> {
-        if time < self.not_before {
-            return Err(Error::CertNotValidYet);
-        } else if time > self.not_after {
-            return Err(Error::CertExpired);
-        }
         self.subject_public_key_info
-            .get_public_key_tls(scheme)?
-            .verify(message, signature)
-            .map_err(|_| Error::InvalidSignatureForPublicKey)
+            .check_signature(algorithm, message, signature)
+    }
+
+    /// Check that the certificate is valid at time `now`
+    pub fn valid(&self, now: u64) -> Result<(), Error> {
+        if now < self.not_before {
+            Err(Error::CertNotValidYet)
+        } else if now > self.not_after {
+            Err(Error::CertExpired)
+        } else {
+            Ok(())
+        }
     }
 
     /// The tbsCertficate
@@ -228,16 +240,16 @@ impl<'a> X509Certificate<'a> {
     pub fn signature(&self) -> &[u8] { self.das.signature() }
 
     /// Verify that `cert` is signed by this certificate’s secret key
-    pub fn verify_signature_of_certificate(
-        &self, time: u64, cert: &X509Certificate<'_>,
-    ) -> Result<(), Error> {
-        self.verify_signature_against_algorithmid(
-            time,
-            cert.signature_algorithm_id(),
-            cert.tbs_certificate(),
+    pub fn check_signature_from(&self, cert: &X509Certificate<'_>) -> Result<(), Error> {
+        cert.check_signature(
+            parse_algorithmid(self.signature_algorithm_id())?,
+            self.tbs_certificate(),
             cert.signature(),
         )
     }
+
+    /// Check that this certificate is self-signed.
+    pub fn check_self_signature(&self) -> Result<(), Error> { self.check_signature_from(self) }
 
     /// Verify a signature made by the certificate’s secret key
     pub fn verify_signature_against_algorithmid(
@@ -333,16 +345,14 @@ mod tests {
             include_bytes!("data/alg-ecdsa-p256.der")
         );
         assert_eq!(cert.subject_public_key_info.key().len(), 65);
-        cert.verify_signature_against_scheme(
-            1586128701,
-            SignatureScheme::ECDSA_NISTP256_SHA256,
-            message,
-            signature,
-        )
-        .expect("OpenSSL generates syntactically valid certificates");
+        cert.valid(1586128701).unwrap();
+        assert_eq!(cert.valid(0), Err(Error::CertNotValidYet));
+        assert_eq!(cert.valid(u64::max_value()), Err(Error::CertExpired));
+
+        cert.check_signature(SignatureScheme::ECDSA_NISTP256_SHA256, message, signature)
+            .expect("OpenSSL generates syntactically valid certificates");
         assert_eq!(
-            cert.verify_signature_against_scheme(
-                1586128701,
+            cert.check_signature(
                 SignatureScheme::ECDSA_NISTP256_SHA256,
                 message,
                 invalid_signature,
@@ -351,8 +361,7 @@ mod tests {
             Error::InvalidSignatureForPublicKey
         );
         assert_eq!(
-            cert.verify_signature_against_scheme(
-                1586128701,
+            cert.check_signature(
                 SignatureScheme::ECDSA_NISTP256_SHA256,
                 message,
                 invalid_signature,
@@ -361,8 +370,7 @@ mod tests {
             Error::InvalidSignatureForPublicKey
         );
         assert_eq!(
-            cert.verify_signature_against_scheme(
-                1586128701,
+            cert.check_signature(
                 SignatureScheme::ECDSA_NISTP256_SHA256,
                 forged_message,
                 signature,

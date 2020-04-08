@@ -53,15 +53,25 @@ impl<'a> SubjectPublicKeyInfo<'a> {
         })
     }
 
+    /// Verify a signature by the private key corresponding to this
+    /// SubjectPublicKeyInfo
+    pub fn check_signature(
+        &self, algorithm: SignatureScheme, message: &[u8], signature: &[u8],
+    ) -> Result<(), Error> {
+        self.public_key(algorithm)?
+            .verify(message, signature)
+            .map_err(|_| Error::InvalidSignatureForPublicKey)
+    }
+
     /// Get a [`signature::UnparsedPublicKey`] for this SubjectPublicKeyInfo
-    pub fn get_public_key_tls(
-        &self, signature_scheme: SignatureScheme,
+    pub fn public_key(
+        &self, algorithm: SignatureScheme,
     ) -> Result<signature::UnparsedPublicKey<&'a [u8]>, Error> {
         #[cfg(feature = "rsa")]
         use signature::{
             RSA_PKCS1_2048_8192_SHA256, RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512,
         };
-        let algorithm: &'static dyn signature::VerificationAlgorithm = match signature_scheme {
+        let algorithm: &'static dyn signature::VerificationAlgorithm = match algorithm {
             #[cfg(feature = "rsa")]
             SignatureScheme::RSA_PKCS1_SHA256 => match self.algorithm {
                 include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA256,
@@ -118,77 +128,42 @@ impl<'a> SubjectPublicKeyInfo<'a> {
     pub fn get_public_key_x509(
         &self, algorithm_id: &[u8],
     ) -> Result<ring::signature::UnparsedPublicKey<&'a [u8]>, Error> {
-        #[cfg(feature = "rsa")]
-        const RSASSA_PSS_PREFIX: &[u8; 11] = include_bytes!("data/alg-rsa-pss.der");
-        #[cfg(feature = "rsa")]
-        use signature::{
-            RSA_PKCS1_2048_8192_SHA256, RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512,
-        };
-        let algorithm: &'static dyn signature::VerificationAlgorithm = match algorithm_id {
-            #[cfg(feature = "rsa")]
-            include_bytes!("data/alg-rsa-pkcs1-sha256.der") => match self.algorithm {
-                include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA256,
-                _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-            },
-            #[cfg(feature = "rsa")]
-            include_bytes!("data/alg-rsa-pkcs1-sha384.der") => match self.algorithm {
-                include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA384,
-                _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-            },
-            #[cfg(feature = "rsa")]
-            include_bytes!("data/alg-rsa-pkcs1-sha512.der") => match self.algorithm {
-                include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA512,
-                _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-            },
-            include_bytes!("data/alg-ecdsa-sha256.der") => match self.algorithm {
-                include_bytes!("data/alg-ecdsa-p256.der") => &signature::ECDSA_P256_SHA256_ASN1,
-                include_bytes!("data/alg-ecdsa-p384.der") => &signature::ECDSA_P384_SHA256_ASN1,
-                _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-            },
-            include_bytes!("data/alg-ecdsa-sha384.der") => match self.algorithm {
-                include_bytes!("data/alg-ecdsa-p256.der") => &signature::ECDSA_P256_SHA384_ASN1,
-                include_bytes!("data/alg-ecdsa-p384.der") => &signature::ECDSA_P384_SHA384_ASN1,
-                _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-            },
-            include_bytes!("data/alg-ed25519.der") => match self.algorithm {
-                include_bytes!("data/alg-ed25519.der") => &signature::ED25519,
-                _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-            },
-            #[cfg(feature = "rsa")]
-            e if e.starts_with(&RSASSA_PSS_PREFIX[..]) => {
-                let alg = parse_rsa_pss(&e[RSASSA_PSS_PREFIX.len()..])?;
-                match self.algorithm {
-                    include_bytes!("data/alg-rsa-encryption.der") => alg,
-                    _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
-                }
-            },
-            _ => return Err(Error::UnsupportedSignatureAlgorithm),
-        };
-        Ok(signature::UnparsedPublicKey::new(algorithm, self.key))
+        self.public_key(parse_algorithmid(algorithm_id)?)
     }
 }
 
-// While the RSA-PSS parameters are a ASN.1 SEQUENCE, it is simpler to match
-// against the 12 different possibilities. The binary files are *generated* by a
-// Go program.
-#[cfg(feature = "rsa")]
-fn parse_rsa_pss(data: &[u8]) -> Result<&'static signature::RsaParameters, Error> {
-    match data {
-        include_bytes!("data/alg-rsa-pss-sha256-v0.der")
-        | include_bytes!("data/alg-rsa-pss-sha256-v1.der")
-        | include_bytes!("data/alg-rsa-pss-sha256-v2.der")
-        | include_bytes!("data/alg-rsa-pss-sha256-v3.der") =>
-            Ok(&signature::RSA_PSS_2048_8192_SHA256),
-        include_bytes!("data/alg-rsa-pss-sha384-v0.der")
-        | include_bytes!("data/alg-rsa-pss-sha384-v1.der")
-        | include_bytes!("data/alg-rsa-pss-sha384-v2.der")
-        | include_bytes!("data/alg-rsa-pss-sha384-v3.der") =>
-            Ok(&signature::RSA_PSS_2048_8192_SHA384),
-        include_bytes!("data/alg-rsa-pss-sha512-v0.der")
-        | include_bytes!("data/alg-rsa-pss-sha512-v1.der")
-        | include_bytes!("data/alg-rsa-pss-sha512-v2.der")
-        | include_bytes!("data/alg-rsa-pss-sha512-v3.der") =>
-            Ok(&signature::RSA_PSS_2048_8192_SHA512),
+const RSASSA_PSS_PREFIX: &[u8; 11] = include_bytes!("data/alg-rsa-pss.der");
+
+/// Parse the ASN.1 DER-encoded algorithm identifier in `asn1` into a
+/// `SignatureScheme`. This will fail if `asn1` is not a known signature scheme.
+pub fn parse_algorithmid(asn1: &[u8]) -> Result<SignatureScheme, Error> {
+    match asn1 {
+        include_bytes!("data/alg-rsa-pkcs1-sha256.der") => Ok(SignatureScheme::RSA_PKCS1_SHA256),
+        include_bytes!("data/alg-rsa-pkcs1-sha384.der") => Ok(SignatureScheme::RSA_PKCS1_SHA384),
+        include_bytes!("data/alg-rsa-pkcs1-sha512.der") => Ok(SignatureScheme::RSA_PKCS1_SHA512),
+        include_bytes!("data/alg-ecdsa-sha384.der") => Ok(SignatureScheme::ECDSA_NISTP256_SHA256),
+        include_bytes!("data/alg-ecdsa-sha384.der") => Ok(SignatureScheme::ECDSA_NISTP384_SHA384),
+        include_bytes!("data/alg-ed25519.der") => Ok(SignatureScheme::ED25519),
+        e if e.starts_with(&RSASSA_PSS_PREFIX[..]) => match &e[RSASSA_PSS_PREFIX.len()..] {
+            include_bytes!("data/alg-rsa-pss-sha256-v0.der")
+            | include_bytes!("data/alg-rsa-pss-sha256-v1.der")
+            | include_bytes!("data/alg-rsa-pss-sha256-v2.der")
+            | include_bytes!("data/alg-rsa-pss-sha256-v3.der") =>
+                Ok(SignatureScheme::RSA_PSS_SHA256),
+
+            include_bytes!("data/alg-rsa-pss-sha384-v0.der")
+            | include_bytes!("data/alg-rsa-pss-sha384-v1.der")
+            | include_bytes!("data/alg-rsa-pss-sha384-v2.der")
+            | include_bytes!("data/alg-rsa-pss-sha384-v3.der") =>
+                Ok(SignatureScheme::RSA_PSS_SHA384),
+
+            include_bytes!("data/alg-rsa-pss-sha512-v0.der")
+            | include_bytes!("data/alg-rsa-pss-sha512-v1.der")
+            | include_bytes!("data/alg-rsa-pss-sha512-v2.der")
+            | include_bytes!("data/alg-rsa-pss-sha512-v3.der") =>
+                Ok(SignatureScheme::RSA_PSS_SHA512),
+            _ => Err(Error::UnsupportedSignatureAlgorithm),
+        },
         _ => Err(Error::UnsupportedSignatureAlgorithm),
     }
 }
