@@ -112,6 +112,7 @@ mod tests {
                         i64::from(seconds_since_midnight)
                     );
                     assert_eq!(last_second.wrapping_add(1), seconds_since_midnight);
+                    assert!(seconds_since_midnight < 86400);
                     last_second = seconds_since_midnight;
                 }
             }
@@ -134,6 +135,7 @@ mod tests {
                         LocalResult::Single(e) => {
                             let this_day = days_since_epoch.unwrap();
                             assert_eq!(this_day, last_day.wrapping_add(1));
+                            assert!(this_day < i32::max_value() as u32);
                             last_day = this_day;
                             assert_eq!(
                                 e.and_hms(0, 0, 0).timestamp(),
@@ -168,6 +170,7 @@ mod tests {
         let too_short_generalized = untrusted::Input::from(b"\x18\x0d991231235959Z")
             .read_all(Error::CertExpired, read_time);
         assert_eq!(too_short_generalized, Err(Error::BadDER));
+        assert!(253402300799u64.leading_zeros() > 25);
         input_test!(b"\x18\x0f99991231235959Z", Ok(253402300799));
         input_test!(b"\x18\x0f:9991231235959Z", Err(Error::BadDERTime));
         input_test!(b"\x18\x0f9:991231235959Z", Err(Error::BadDERTime));
