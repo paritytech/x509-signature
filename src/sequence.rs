@@ -62,7 +62,8 @@ impl<'a> ExtensionIterator<'a> {
         &self, cb: &mut T,
     ) -> Result<(), Error> {
         self.0.iterate(Error::BadDER, &mut |input| {
-            let oid = der::expect_tag_and_get_value(input, der::Tag::OID)?;
+            let oid =
+                der::expect_tag_and_get_value(input, der::Tag::OID).map_err(|_| Error::BadDER)?;
             let mut critical = false;
             if input.peek(der::Tag::Boolean as _) {
                 critical = match input
@@ -75,7 +76,8 @@ impl<'a> ExtensionIterator<'a> {
                     _ => return Err(Error::BadDER),
                 }
             }
-            let value = der::expect_tag_and_get_value(input, der::Tag::OctetString)?;
+            let value = der::expect_tag_and_get_value(input, der::Tag::OctetString)
+                .map_err(|_| Error::BadDER)?;
             cb(oid.as_slice_less_safe(), critical, value)
         })
     }

@@ -96,13 +96,12 @@
     bare_trait_objects
 )]
 
-mod calendar;
 mod das;
-mod der;
 mod sequence;
+mod time;
+use ring::io::der;
 mod spki;
 pub use das::DataAlgorithmSignature;
-use ring::error::Unspecified;
 pub use sequence::{ExtensionIterator, SequenceIterator};
 pub use spki::SubjectPublicKeyInfo;
 
@@ -253,31 +252,34 @@ impl<'a> X509Certificate<'a> {
 /// Extracts the algorithm id and public key from a certificate
 pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a>, Error> {
     use core::convert::TryFrom as _;
-    let das = DataAlgorithmSignature::try_from(certificate).map_err(|Unspecified| Error::BadDER)?;
+    let das = DataAlgorithmSignature::try_from(certificate)?;
     untrusted::Input::from(&*das.inner()).read_all(Error::BadDER, |input| {
         // We require extensions, which means we require version 3
-        der::expect_bytes(input, &[160, 3, 2, 1, 2], Error::UnsupportedCertVersion)?;
-        // serialNumber
-        let serial = der::positive_integer(input)?.big_endian_without_leading_zero();
-        // signature
-        if der::expect_tag_and_get_value(input, der::Tag::Sequence)?.as_slice_less_safe()
-            != das.algorithm()
+        if input.read_bytes(5).map_err(|_| Error::BadDER)?
+            != untrusted::Input::from(&[160, 3, 2, 1, 2])
         {
+            return Err(Error::UnsupportedCertVersion);
+        }
+        // serialNumber
+        let serial = der::positive_integer(input)
+            .map_err(|_| Error::BadDER)?
+            .big_endian_without_leading_zero();
+        // signature
+        if das::read_sequence(input)?.as_slice_less_safe() != das.algorithm() {
             // signature algorithms don’t match
             return Err(Error::SignatureAlgorithmMismatch);
         }
         // issuer
-        let issuer = der::expect_tag_and_get_value(input, der::Tag::Sequence)?.as_slice_less_safe();
+        let issuer = das::read_sequence(input)?.as_slice_less_safe();
         // validity
         let (not_before, not_after) =
             der::nested(input, der::Tag::Sequence, Error::BadDER, |input| {
-                Ok((der::time_choice(input)?, der::time_choice(input)?))
+                Ok((time::read_time(input)?, time::read_time(input)?))
             })?;
         if not_before > not_after {
             return Err(Error::InvalidCertValidity);
         }
-        let subject =
-            der::expect_tag_and_get_value(input, der::Tag::Sequence)?.as_slice_less_safe();
+        let subject = das::read_sequence(input)?.as_slice_less_safe();
         let subject_public_key_info = SubjectPublicKeyInfo::read(input)?;
         // subjectUniqueId and issuerUniqueId are unsupported
 

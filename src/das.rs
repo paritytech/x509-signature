@@ -14,7 +14,8 @@
 
 //! Data-algorithm-signature ASN.1 structures
 
-use ring::{error::Unspecified, io::der};
+use super::Error;
+use ring::io::der;
 
 /// A data-algorithm-signature structure
 #[derive(Debug, Copy, Clone)]
@@ -39,21 +40,23 @@ impl<'a> DataAlgorithmSignature<'a> {
 #[inline(always)]
 pub(crate) fn read_sequence<'a>(
     input: &mut untrusted::Reader<'a>,
-) -> Result<untrusted::Input<'a>, Unspecified> {
-    der::expect_tag_and_get_value(input, der::Tag::Sequence)
+) -> Result<untrusted::Input<'a>, Error> {
+    der::expect_tag_and_get_value(input, der::Tag::Sequence).map_err(|_| Error::BadDER)
 }
 
 impl<'a> core::convert::TryFrom<&'a [u8]> for DataAlgorithmSignature<'a> {
-    type Error = Unspecified;
+    type Error = Error;
     fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
-        untrusted::Input::from(value).read_all(Unspecified, |input| {
-            der::nested(input, der::Tag::Sequence, Unspecified, |input| {
+        untrusted::Input::from(value).read_all(Error::BadDER, |input| {
+            der::nested(input, der::Tag::Sequence, Error::BadDER, |input| {
                 // tbsCertificate
                 let (data, inner) = input.read_partial(read_sequence)?;
                 // signatureAlgorithm
                 let algorithm = read_sequence(input)?.as_slice_less_safe();
                 // signatureValue
-                let signature = der::bit_string_with_no_unused_bits(input)?.as_slice_less_safe();
+                let signature = der::bit_string_with_no_unused_bits(input)
+                    .map_err(|_| Error::BadDER)?
+                    .as_slice_less_safe();
                 Ok(Self {
                     data: data.as_slice_less_safe(),
                     inner: inner.as_slice_less_safe(),

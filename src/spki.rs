@@ -40,8 +40,9 @@ impl<'a> SubjectPublicKeyInfo<'a> {
     pub fn read(input: &mut untrusted::Reader<'a>) -> Result<Self, Error> {
         let (spki, (algorithm, key)) = input.read_partial(|input| {
             der::nested(input, Tag::Sequence, Error::BadDER, |input| {
-                let algorithm = der::expect_tag_and_get_value(input, Tag::Sequence)?;
-                let key = der::bit_string_with_no_unused_bits(input)?;
+                let algorithm = der::expect_tag_and_get_value(input, Tag::Sequence)
+                    .map_err(|_| Error::BadDER)?;
+                let key = der::bit_string_with_no_unused_bits(input).map_err(|_| Error::BadDER)?;
                 Ok((algorithm.as_slice_less_safe(), key.as_slice_less_safe()))
             })
         })?;
