@@ -3,10 +3,10 @@ name = "x509-signature"
 version = "0.1.0"
 authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
-license = "ISC"
+license = "MIT OR Apache-2.0"
 description = "Low-level X.509 parsing and signature verification library"
 repository = "https://github.com/paritytech/x509-signature"
-keywords = ["X.509", "ASN.1", "cryptography"]
+keywords = ["X509", "ASN1", "cryptography"]
 
 [dependencies]
 ring = { version = "0.16.12", default-features = false }

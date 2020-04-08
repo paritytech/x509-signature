@@ -23,4 +23,8 @@ does provide the hooks needed for higher-level libraries to be built on top of i
 Like webpki, x509-signature is zero-copy and `#![no_std]` friendly.  If built without the
 `alloc` feature, x509-signature will not rely on features of *ring* that require heap
 allocation, specifically RSA.  x509-signature should never panic on any input.
-# 
+ 
+# License
+
+x509-signature is dual-licensed under the [MIT license](LICENSE-MIT) and the
+[Apache License, Version 2.0](LICENSE-APACHE), at your option.
