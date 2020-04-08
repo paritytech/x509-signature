@@ -24,8 +24,8 @@ const GENERALIZED_TIME: u8 = der::Tag::GeneralizedTime as _;
 
 pub(super) fn read_time(reader: &mut untrusted::Reader<'_>) -> Result<u64, Error> {
     let (tag, value) = der::read_tag_and_get_value(reader).map_err(|_| Error::BadDER)?;
-    let (slice, month, day, hour, minute, second) = match value.as_slice_less_safe() {
-        [slice @ .., month1, month2, d1, d2, h1, h2, m1, m2, s1, s2, b'Z'] => {
+    let (slice, month, day, hour, minute, second) = match *value.as_slice_less_safe() {
+        [ref slice @ .., month1, month2, d1, d2, h1, h2, m1, m2, s1, s2, b'Z'] => {
             let month: u8 = collect!(month1, month2);
             let day: u8 = collect!(d1, d2);
             let hour: u8 = collect!(h1, h2);
@@ -37,11 +37,11 @@ pub(super) fn read_time(reader: &mut untrusted::Reader<'_>) -> Result<u64, Error
     };
 
     let year = match (tag, slice) {
-        (UTC_TIME, [y1, y2]) => {
+        (UTC_TIME, &[y1, y2]) => {
             let year = collect!(y1, y2);
             (if year > 49 { 1900 } else { 2000u16 }) + u16::from(year)
         },
-        (GENERALIZED_TIME, [y1, y2, y3, y4]) => collect!(y1, y2, y3, y4).try_into().unwrap(),
+        (GENERALIZED_TIME, &[y1, y2, y3, y4]) => collect!(y1, y2, y3, y4).try_into().unwrap(),
         _ => return Err(Error::BadDER),
     };
     Ok(86400 * u64::from(days_from_ymd(year, month, day)?)
@@ -66,13 +66,11 @@ fn days_from_ymd(year: u16, month: u8, day: u8) -> Result<u32, Error> {
         return Err(Error::BadDERTime);
     }
     let month = month as i8;
-    if day
-        > if month == 2 {
-            29u8 - u8::from(year % 4 != 0 || (year % 100 == 0 && year % 400 != 0))
-        } else {
-            DAYS_IN_MONTH[month as usize - 1]
-        }
-    {
+    if if month == 2 {
+        day > 29u8 - u8::from(year % 4 != 0 || (year % 100 == 0 && year % 400 != 0))
+    } else {
+        day > DAYS_IN_MONTH[month as usize - 1]
+    } {
         return Err(Error::BadDERTime);
     }
 
