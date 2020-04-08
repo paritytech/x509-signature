@@ -116,7 +116,7 @@ impl<'a> SubjectPublicKeyInfo<'a> {
 
     /// Get a [`signature::UnparsedPublicKey`] for this SubjectPublicKeyInfo
     pub fn get_public_key_x509(
-        &self, signature_algorithm: &[u8],
+        &self, algorithm_id: &[u8],
     ) -> Result<ring::signature::UnparsedPublicKey<&'a [u8]>, Error> {
         #[cfg(feature = "rsa")]
         const RSASSA_PSS_PREFIX: &[u8; 11] = include_bytes!("data/alg-rsa-pss.der");
@@ -124,7 +124,7 @@ impl<'a> SubjectPublicKeyInfo<'a> {
         use signature::{
             RSA_PKCS1_2048_8192_SHA256, RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512,
         };
-        let algorithm: &'static dyn signature::VerificationAlgorithm = match signature_algorithm {
+        let algorithm: &'static dyn signature::VerificationAlgorithm = match algorithm_id {
             #[cfg(feature = "rsa")]
             include_bytes!("data/alg-rsa-pkcs1-sha256.der") => match self.algorithm {
                 include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA256,

@@ -218,24 +218,30 @@ impl<'a> X509Certificate<'a> {
             .map_err(|_| Error::InvalidSignatureForPublicKey)
     }
 
-    /// Verify a signature made by the certificate
-    pub fn verify_data_algorithm_signature(
-        &self, time: u64, das: &DataAlgorithmSignature<'_>,
+    /// The tbsCertficate
+    pub fn tbs_certificate(&self) -> &[u8] { self.das.data() }
+
+    /// The `AlgorithmId` of the algorithm used to sign this certificate
+    pub fn signature_algorithm_id(&self) -> &[u8] { self.das.algorithm() }
+
+    /// The signature of the certificate
+    pub fn signature(&self) -> &[u8] { self.das.signature() }
+
+    /// Verify that `cert` is signed by this certificate’s secret key
+    pub fn verify_signature_of_certificate(
+        &self, time: u64, cert: &X509Certificate<'_>,
     ) -> Result<(), Error> {
-        if time < self.not_before {
-            return Err(Error::CertNotValidYet);
-        } else if time > self.not_after {
-            return Err(Error::CertExpired);
-        }
-        self.subject_public_key_info
-            .get_public_key_x509(das.algorithm())?
-            .verify(das.data(), das.signature())
-            .map_err(|_| Error::InvalidSignatureForPublicKey)
+        self.verify_signature_against_algorithmid(
+            time,
+            cert.signature_algorithm_id(),
+            cert.tbs_certificate(),
+            cert.signature(),
+        )
     }
 
-    /// Verify a signature made by the certificate
-    pub fn verify_certificate_signature(
-        &self, time: u64, das: &DataAlgorithmSignature<'_>,
+    /// Verify a signature made by the certificate’s secret key
+    pub fn verify_signature_against_algorithmid(
+        &self, time: u64, algorithm_id: &[u8], message: &[u8], signature: &[u8],
     ) -> Result<(), Error> {
         if time < self.not_before {
             return Err(Error::CertNotValidYet);
@@ -243,8 +249,8 @@ impl<'a> X509Certificate<'a> {
             return Err(Error::CertExpired);
         }
         self.subject_public_key_info
-            .get_public_key_x509(das.algorithm())?
-            .verify(das.data(), das.signature())
+            .get_public_key_x509(algorithm_id)?
+            .verify(message, signature)
             .map_err(|_| Error::InvalidSignatureForPublicKey)
     }
 }
