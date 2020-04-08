@@ -254,11 +254,16 @@ pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a
     use core::convert::TryFrom as _;
     let das = DataAlgorithmSignature::try_from(certificate)?;
     untrusted::Input::from(&*das.inner()).read_all(Error::BadDER, |input| {
-        // We require extensions, which means we require version 3
-        if input.read_bytes(5).map_err(|_| Error::BadDER)?
-            != untrusted::Input::from(&[160, 3, 2, 1, 2])
-        {
-            return Err(Error::UnsupportedCertVersion);
+        const CONTEXT_SPECIFIC_PRIMITIVE_1: u8 = der::CONTEXT_SPECIFIC | 1;
+        const CONTEXT_SPECIFIC_PRIMITIVE_2: u8 = der::CONTEXT_SPECIFIC | 2;
+        const CONTEXT_SPECIFIC_CONSTRUCTED_3: u8 = der::Tag::ContextSpecificConstructed3 as _;
+        let mut version: u8 = 1;
+        if input.peek(der::Tag::ContextSpecificConstructed0 as u8) {
+            match input.read_bytes(5).map(|input| input.as_slice_less_safe()) {
+                Ok([160, 3, 2, 1, 2]) => version = 3,
+                Ok([160, 3, 2, 1, 1]) => version = 2,
+                _ => return Err(Error::BadDER),
+            }
         }
         // serialNumber
         let serial = der::positive_integer(input)
@@ -281,21 +286,37 @@ pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a
         }
         let subject = das::read_sequence(input)?.as_slice_less_safe();
         let subject_public_key_info = SubjectPublicKeyInfo::read(input)?;
-        // subjectUniqueId and issuerUniqueId are unsupported
-
-        let extensions = if !input.at_end() {
-            let tag = der::Tag::ContextSpecificConstructed3;
-            der::nested(input, tag, Error::BadDER, |input| {
-                der::nested(input, der::Tag::Sequence, Error::BadDER, |input| {
-                    if input.at_end() {
+        let mut last_tag = 0;
+        let mut extensions = None;
+        while !input.at_end() {
+            let (tag, value) = der::read_tag_and_get_value(input).map_err(|_| Error::BadDER)?;
+            if tag <= last_tag {
+                return Err(Error::BadDER);
+            }
+            last_tag = tag;
+            match tag {
+                CONTEXT_SPECIFIC_PRIMITIVE_1 | CONTEXT_SPECIFIC_PRIMITIVE_2 if version >= 2 =>
+                    match *value.as_slice_less_safe() {
+                        [0, ..] => continue,
+                        [unused_bits, .., last]
+                            if unused_bits < 8 && last.trailing_zeros() >= unused_bits.into() =>
+                            continue,
+                        _ => return Err(Error::BadDER),
+                    },
+                CONTEXT_SPECIFIC_CONSTRUCTED_3 if version >= 3 => {
+                    let extension_data = value.read_all(Error::BadDER, das::read_sequence)?;
+                    if extension_data.as_slice_less_safe().is_empty() {
                         return Err(Error::BadDER);
                     }
-                    Ok(ExtensionIterator(SequenceIterator::read(input)))
-                })
-            })
-        } else {
-            Ok(ExtensionIterator(SequenceIterator::read(input)))
-        }?;
+                    extensions = Some(extension_data)
+                },
+                _ => return Err(Error::BadDER),
+            }
+        }
+
+        let extensions = ExtensionIterator(SequenceIterator::read(
+            extensions.unwrap_or(input.read_bytes_to_end()),
+        ));
 
         Ok(X509Certificate {
             das,

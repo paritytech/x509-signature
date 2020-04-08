@@ -31,12 +31,8 @@ pub struct SequenceIterator<'a> {
 }
 
 impl<'a> SequenceIterator<'a> {
-    /// Read X.509 extensions from an [`untrusted::Reader`].
-    pub fn read(input: &mut untrusted::Reader<'a>) -> Self {
-        Self {
-            inner: input.read_bytes_to_end(),
-        }
-    }
+    /// Read X.509 extensions from an [`untrusted::Input`].
+    pub fn read(input: untrusted::Input<'a>) -> Self { Self { inner: input } }
 
     /// Iterate over the X.509 extensions.  The callback is expected to read the
     /// provided [`untrusted::Reader`] to the end; if it does not, or if the
