@@ -32,7 +32,7 @@ pub(super) fn read_time(reader: &mut untrusted::Reader<'_>) -> Result<u64, Error
             let minute: u8 = collect!(m1, m2);
             let second: u8 = collect!(s1, s2);
             (slice, month, day, hour, minute, second)
-        }
+        },
         _ => return Err(Error::BadDERTime),
     };
 
@@ -40,7 +40,7 @@ pub(super) fn read_time(reader: &mut untrusted::Reader<'_>) -> Result<u64, Error
         (UTC_TIME, [y1, y2]) => {
             let year = collect!(y1, y2);
             (if year > 49 { 1900 } else { 2000u16 }) + u16::from(year)
-        }
+        },
         (GENERALIZED_TIME, [y1, y2, y3, y4]) => collect!(y1, y2, y3, y4).try_into().unwrap(),
         _ => return Err(Error::BadDER),
     };
@@ -102,12 +102,17 @@ mod tests {
                     let seconds_since_midnight = seconds_from_hms(hour, minute, second);
                     if hour >= 24 || minute >= 60 || second >= 60 {
                         assert!(seconds_since_midnight.is_err());
-                        assert!(date.and_hms_opt(hour.into(), minute.into(), second.into()).is_none());
+                        assert!(date
+                            .and_hms_opt(hour.into(), minute.into(), second.into())
+                            .is_none());
                         continue;
                     }
                     let seconds_since_midnight = seconds_since_midnight.unwrap();
                     let chronos_version = date.and_hms(hour.into(), minute.into(), second.into());
-                    assert_eq!(chronos_version.timestamp(), i64::from(seconds_since_midnight));
+                    assert_eq!(
+                        chronos_version.timestamp(),
+                        i64::from(seconds_since_midnight)
+                    );
                     assert_eq!(last_second.wrapping_add(1), seconds_since_midnight);
                     last_second = seconds_since_midnight;
                 }
@@ -140,7 +145,7 @@ mod tests {
                                 month,
                                 day,
                             )
-                        }
+                        },
                         LocalResult::Ambiguous(_, _) => unreachable!(),
                     }
                 }
@@ -148,46 +153,57 @@ mod tests {
         }
     }
 
+    macro_rules! input_test {
+        ($b: expr, $cmp: expr) => {
+            assert_eq!(
+                untrusted::Input::from($b).read_all(Error::CertExpired, read_time),
+                $cmp
+            )
+        };
+    }
+
     #[test]
     fn wrong_length_rejected() {
-        let too_long_utc = untrusted::Input::from(b"\x17\x0f99991231235959Z").read_all(Error::CertExpired, read_time);
+        let too_long_utc = untrusted::Input::from(b"\x17\x0f99991231235959Z")
+            .read_all(Error::CertExpired, read_time);
         assert_eq!(too_long_utc, Err(Error::BadDER));
-        let too_short_generalized = untrusted::Input::from(b"\x18\x0d991231235959Z").read_all(Error::CertExpired, read_time);
+        let too_short_generalized = untrusted::Input::from(b"\x18\x0d991231235959Z")
+            .read_all(Error::CertExpired, read_time);
         assert_eq!(too_short_generalized, Err(Error::BadDER));
-        untrusted::Input::from(b"\x18\x0f99991231235959Z").read_all(Error::BadDER, read_time).unwrap();
-        assert_eq!(untrusted::Input::from(b"\x18\x0f:9991231235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f9:991231235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f99:91231235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f999:1231235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f9999 331235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f99991 31235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f999912 1235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f9999123 235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f99991231 35959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f999912312 5959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f99991231245959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f9999123123 959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f99991231235 59Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f999912312359 9Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f9999123123595 Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f99991231235959 ").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f99991331235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f99990001235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f99990431235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f99990431235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f99990229235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0d960229235959Z").read_all(Error::CertExpired, read_time), Err(Error::BadDER));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f19600229235959Z").read_all(Error::CertExpired, read_time),  Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x17\x0d490229235959Z").read_all(Error::CertExpired, read_time),  Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x17\x0d490228235959Z").read_all(Error::CertExpired, read_time),  Ok(2498169599));
-        assert_eq!(untrusted::Input::from(b"\x17\x0d500228235959Z").read_all(Error::CertExpired, read_time),  Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f19960229235959Z").read_all(Error::CertExpired, read_time), Ok(825638399));
-        assert_eq!(untrusted::Input::from(b"\x17\x0d960229235959Z").read_all(Error::CertExpired, read_time), Ok(825638399));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f99960229235959Z").read_all(Error::BadDER, read_time), Ok(253281254399));
-        assert_eq!(untrusted::Input::from(b"\x18\x0e99960229235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x1099960229235959Z").read_all(Error::CertExpired, read_time), Err(Error::BadDER));
-        assert_eq!(untrusted::Input::from(b"\x18\xFF99960229235959Z").read_all(Error::CertExpired, read_time), Err(Error::BadDER));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f99000229235959Z").read_all(Error::BadDER, read_time), Err(Error::BadDERTime));
-        assert_eq!(untrusted::Input::from(b"\x18\x0f96000229235959Z").read_all(Error::BadDER, read_time), Ok(240784703999));
+        input_test!(b"\x18\x0f99991231235959Z", Ok(253402300799));
+        input_test!(b"\x18\x0f:9991231235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f9:991231235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f99:91231235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f999:1231235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f9999 331235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f99991 31235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f999912 1235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f9999123 235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f99991231 35959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f999912312 5959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f9999123123 959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f99991231235 59Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f999912312359 9Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f9999123123595 Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f99991231235959 ", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f99991231245959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f99991331235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f99990001235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f99990431235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f99990431235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f99990229235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0d960229235959Z", Err(Error::BadDER));
+        input_test!(b"\x18\x0f19600229235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x17\x0d490229235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x17\x0d490228235959Z", Ok(2498169599));
+        input_test!(b"\x17\x0d500228235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f19960229235959Z", Ok(825638399));
+        input_test!(b"\x17\x0d960229235959Z", Ok(825638399));
+        input_test!(b"\x18\x0f99960229235959Z", Ok(253281254399));
+        input_test!(b"\x18\x0e99960229235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x1099960229235959Z", Err(Error::BadDER));
+        input_test!(b"\x18\xFF99960229235959Z", Err(Error::BadDER));
+        input_test!(b"\x18\x0f99000229235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f96000229235959Z", Ok(240784703999));
     }
 }
