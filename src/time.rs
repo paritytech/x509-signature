@@ -58,16 +58,18 @@ fn seconds_from_hms(hour: u8, minute: u8, second: u8) -> Result<u32, Error> {
 
 /// We use our own version, instead of chrono, because:
 ///
-/// * We can (and do) perform exhaustive testing of every possible input.
+/// * We can (and do) perform exhaustive testing of every possible input. The
+///   only possible inputs are (0, 0, 0) to (9999, 99, 99) inclusive, and we can
+///   (and do) test every single one of them in a reasonable amount of time.
 /// * It avoids an unnecessary dependency, and thus prevents bloat.
 fn days_from_ymd(year: u16, month: u8, day: u8) -> Result<u32, Error> {
     const DAYS_IN_MONTH: [u8; 12] = [31, 0, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     if year < 1970 || month < 1 || month > 12 || day < 1 {
         return Err(Error::BadDERTime);
     }
-    let month = month as i8;
     if if month == 2 {
-        day > 29u8 - u8::from(year % 4 != 0 || (year % 100 == 0 && year % 400 != 0))
+        let not_leap = year % 4 != 0 || (year % 100 == 0 && year % 400 != 0);
+        day > 29u8 - u8::from(not_leap)
     } else {
         day > DAYS_IN_MONTH[month as usize - 1]
     } {
@@ -79,8 +81,9 @@ fn days_from_ymd(year: u16, month: u8, day: u8) -> Result<u32, Error> {
     let year: i32 = i32::from(year) - i32::from(month <= 2);
     let era: i32 = if year >= 0 { year } else { year - 399 } / 400;
     let yoe: u32 = (year - era * 400) as _;
-    let doy: u32 =
-        (153 * (month + if month > 2 { -3 } else { 9 }) as u32 + 2) / 5 + u32::from(day) - 1;
+    let months_since_feb = if month > 2 { month - 3 } else { month + 9 };
+    // This is magic, but the unit-tests prove that it is correct.
+    let doy: u32 = (153 * months_since_feb as u32 + 2) / 5 + u32::from(day) - 1;
     let doe: u32 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     Ok((era * 146097 + doe as i32 - 719468) as u32)
 }

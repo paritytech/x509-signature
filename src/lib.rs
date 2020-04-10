@@ -1,17 +1,3 @@
-// Copyright 2020 Parity Technologies (UK) Ltd.
-//
-// Permission to use, copy, modify, and/or distribute this software for any
-// purpose with or without fee is hereby granted, provided that the above
-// copyright notice and this permission notice appear in all copies.
-//
-// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHORS DISCLAIM ALL WARRANTIES
-// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
-// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR
-// ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-// OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-
 //! # A low-level X.509 parsing and certificate signature verification library.
 //!
 //! x509-signature can verify the signatures of X.509 certificates, as well as
@@ -45,55 +31,32 @@
 
 #![no_std]
 #![deny(
-    exceeding_bitshifts,
-    invalid_type_param_default,
-    missing_fragment_specifier,
-    no_mangle_const_items,
-    overflowing_literals,
-    patterns_in_fns_without_body,
-    pub_use_of_private_extern_crate,
-    unknown_crate_types,
     const_err,
-    order_dependent_trait_objects,
-    illegal_floating_point_literal_pattern,
+    deprecated,
     improper_ctypes,
-    late_bound_lifetime_arguments,
-    non_camel_case_types,
     non_shorthand_field_patterns,
-    non_snake_case,
-    non_upper_case_globals,
+    nonstandard_style,
     no_mangle_generic_items,
-    path_statements,
-    private_in_public,
-    stable_features,
+    renamed_and_removed_lints,
+    unknown_lints,
     type_alias_bounds,
-    tyvar_behind_raw_pointer,
-    unused,
-    unused_allocation,
-    unused_comparisons,
-    unused_mut,
-    unreachable_pub,
-    anonymous_parameters,
     missing_copy_implementations,
     missing_debug_implementations,
     missing_docs,
     single_use_lifetimes,
     trivial_casts,
     trivial_numeric_casts,
-    unused_extern_crates,
-    unused_import_braces,
-    unused_qualifications,
+    rust_2018_idioms,
+    unused,
+    future_incompatible,
     clippy::all
 )]
 #![forbid(
-    mutable_transmutes,
     unconditional_recursion,
     unsafe_code,
     intra_doc_link_resolution_failure,
-    safe_packed_borrows,
     while_true,
-    elided_lifetimes_in_paths,
-    bare_trait_objects
+    elided_lifetimes_in_paths
 )]
 
 mod das;
@@ -103,7 +66,7 @@ use ring::io::der;
 mod spki;
 pub use das::DataAlgorithmSignature;
 pub use sequence::{ExtensionIterator, SequenceIterator};
-pub use spki::{parse_algorithmid, SubjectPublicKeyInfo};
+pub use spki::{parse_algorithmid, Restrictions, SubjectPublicKeyInfo};
 
 #[cfg(feature = "rustls")]
 pub use r::SignatureScheme;
@@ -215,8 +178,44 @@ impl<'a> X509Certificate<'a> {
     pub fn check_signature(
         &self, algorithm: SignatureScheme, message: &[u8], signature: &[u8],
     ) -> Result<(), Error> {
-        self.subject_public_key_info
-            .check_signature(algorithm, message, signature)
+        self.subject_public_key_info.check_signature(
+            algorithm,
+            message,
+            signature,
+            Restrictions::None,
+        )
+    }
+
+    /// Verify a signature made by the certificate, applying the restrictions of
+    /// TLSv1.3:
+    ///
+    /// * ECDSA algorithms where the hash has a different size than the curve
+    ///   are not allowed.
+    /// * RSA PKCS1.5 signatures are not allowed.
+    pub fn check_tls13_signature(
+        &self, algorithm: SignatureScheme, message: &[u8], signature: &[u8],
+    ) -> Result<(), Error> {
+        self.subject_public_key_info.check_signature(
+            algorithm,
+            message,
+            signature,
+            Restrictions::TLSv13,
+        )
+    }
+
+    /// Verify a signature made by the certificate, applying the restrictions of
+    /// TLSv1.2:
+    ///
+    /// * RSA-PSS signatures are not allowed.
+    pub fn check_tls12_signature(
+        &self, algorithm: SignatureScheme, message: &[u8], signature: &[u8],
+    ) -> Result<(), Error> {
+        self.subject_public_key_info.check_signature(
+            algorithm,
+            message,
+            signature,
+            Restrictions::TLSv12,
+        )
     }
 
     /// Check that the certificate is valid at time `now`
@@ -250,21 +249,6 @@ impl<'a> X509Certificate<'a> {
 
     /// Check that this certificate is self-signed.
     pub fn check_self_signature(&self) -> Result<(), Error> { self.check_signature_from(self) }
-
-    /// Verify a signature made by the certificate’s secret key
-    pub fn verify_signature_against_algorithmid(
-        &self, time: u64, algorithm_id: &[u8], message: &[u8], signature: &[u8],
-    ) -> Result<(), Error> {
-        if time < self.not_before {
-            return Err(Error::CertNotValidYet);
-        } else if time > self.not_after {
-            return Err(Error::CertExpired);
-        }
-        self.subject_public_key_info
-            .get_public_key_x509(algorithm_id)?
-            .verify(message, signature)
-            .map_err(|_| Error::InvalidSignatureForPublicKey)
-    }
 }
 
 /// Extracts the algorithm id and public key from a certificate

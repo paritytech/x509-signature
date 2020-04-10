@@ -1,17 +1,3 @@
-// Copyright 2020 Parity Technologies (UK) Ltd.
-//
-// Permission to use, copy, modify, and/or distribute this software for any
-// purpose with or without fee is hereby granted, provided that the above
-// copyright notice and this permission notice appear in all copies.
-//
-// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHORS DISCLAIM ALL WARRANTIES
-// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
-// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR
-// ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-// OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-
 //! PKIX SubjectPublicKeyInfo parsing
 
 use super::{
@@ -20,6 +6,23 @@ use super::{
 };
 
 use ring::signature;
+
+/// Restrictions on allowed signature algorithms
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Restrictions {
+    /// Allow all supported signature algorithms. This is the default.
+    None,
+    /// Only support signature algorithms allowed by TLS1.2. This should not be
+    /// used in other contexts.
+    TLSv12,
+    /// Only support signature algorithms allowed by TLS1.3. This is a good
+    /// choice for new protocols as well.
+    TLSv13,
+}
+
+impl Default for Restrictions {
+    fn default() -> Self { Self::None }
+}
 
 /// A PKIX SubjectPublicKeyInfo struct
 #[derive(Debug, Copy, Clone)]
@@ -54,81 +57,84 @@ impl<'a> SubjectPublicKeyInfo<'a> {
     }
 
     /// Verify a signature by the private key corresponding to this
-    /// SubjectPublicKeyInfo
+    /// SubjectPublicKeyInfo. `restrictions` indicates the restrictions on
+    /// allowed algorithms.
     pub fn check_signature(
         &self, algorithm: SignatureScheme, message: &[u8], signature: &[u8],
+        restrictions: Restrictions,
     ) -> Result<(), Error> {
-        self.public_key(algorithm)?
+        self.public_key(algorithm, restrictions)?
             .verify(message, signature)
             .map_err(|_| Error::InvalidSignatureForPublicKey)
     }
 
-    /// Get a [`signature::UnparsedPublicKey`] for this SubjectPublicKeyInfo
+    /// Get a [`signature::UnparsedPublicKey`] for this SubjectPublicKeyInfo.
+    ///
+    /// `restrictions` indicates the restrictions on allowed algorithms.
     pub fn public_key(
-        &self, algorithm: SignatureScheme,
+        &self, algorithm: SignatureScheme, restrictions: Restrictions,
     ) -> Result<signature::UnparsedPublicKey<&'a [u8]>, Error> {
+        use signature as s;
         #[cfg(feature = "rsa")]
-        use signature::{
-            RSA_PKCS1_2048_8192_SHA256, RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512,
-        };
-        let algorithm: &'static dyn signature::VerificationAlgorithm = match algorithm {
+        use Restrictions::TLSv12;
+        use Restrictions::TLSv13;
+        let algorithm: &'static dyn s::VerificationAlgorithm = match algorithm {
             #[cfg(feature = "rsa")]
-            SignatureScheme::RSA_PKCS1_SHA256 => match self.algorithm {
-                include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA256,
+            SignatureScheme::RSA_PKCS1_SHA256 if restrictions != TLSv13 => match self.algorithm {
+                include_bytes!("data/alg-rsa-encryption.der") => (&s::RSA_PKCS1_2048_8192_SHA256),
                 _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
             },
             #[cfg(feature = "rsa")]
-            SignatureScheme::RSA_PKCS1_SHA384 => match self.algorithm {
-                include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA384,
+            SignatureScheme::RSA_PKCS1_SHA384 if restrictions != TLSv13 => match self.algorithm {
+                include_bytes!("data/alg-rsa-encryption.der") => (&s::RSA_PKCS1_2048_8192_SHA384),
                 _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
             },
             #[cfg(feature = "rsa")]
-            SignatureScheme::RSA_PKCS1_SHA512 => match self.algorithm {
-                include_bytes!("data/alg-rsa-encryption.der") => &RSA_PKCS1_2048_8192_SHA512,
+            SignatureScheme::RSA_PKCS1_SHA512 if restrictions != TLSv13 => match self.algorithm {
+                include_bytes!("data/alg-rsa-encryption.der") => &s::RSA_PKCS1_2048_8192_SHA512,
                 _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
             },
             SignatureScheme::ECDSA_NISTP256_SHA256 => match self.algorithm {
-                include_bytes!("data/alg-ecdsa-p256.der") => &signature::ECDSA_P256_SHA256_ASN1,
-                include_bytes!("data/alg-ecdsa-p384.der") => &signature::ECDSA_P384_SHA256_ASN1,
+                include_bytes!("data/alg-ecdsa-p256.der") => &s::ECDSA_P256_SHA256_ASN1,
+                include_bytes!("data/alg-ecdsa-p384.der") if restrictions != TLSv13 =>
+                    &s::ECDSA_P384_SHA256_ASN1,
                 _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
             },
             SignatureScheme::ECDSA_NISTP384_SHA384 => match self.algorithm {
-                include_bytes!("data/alg-ecdsa-p384.der") => &signature::ECDSA_P384_SHA384_ASN1,
-                include_bytes!("data/alg-ecdsa-p256.der") => &signature::ECDSA_P256_SHA384_ASN1,
+                include_bytes!("data/alg-ecdsa-p384.der") => &s::ECDSA_P384_SHA384_ASN1,
+                include_bytes!("data/alg-ecdsa-p256.der") if restrictions != TLSv13 =>
+                    &s::ECDSA_P256_SHA384_ASN1,
                 _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
             },
             SignatureScheme::ED25519 => match self.algorithm {
-                include_bytes!("data/alg-ed25519.der") => &signature::ED25519,
+                include_bytes!("data/alg-ed25519.der") => &s::ED25519,
                 _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
             },
             #[cfg(feature = "rsa")]
-            SignatureScheme::RSA_PSS_SHA256 => match self.algorithm {
-                include_bytes!("data/alg-rsa-encryption.der") =>
-                    &signature::RSA_PSS_2048_8192_SHA256,
+            SignatureScheme::RSA_PSS_SHA256 if restrictions != TLSv12 => match self.algorithm {
+                include_bytes!("data/alg-rsa-encryption.der") => &s::RSA_PSS_2048_8192_SHA256,
                 _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
             },
             #[cfg(feature = "rsa")]
-            SignatureScheme::RSA_PSS_SHA384 => match self.algorithm {
-                include_bytes!("data/alg-rsa-encryption.der") =>
-                    &signature::RSA_PSS_2048_8192_SHA384,
+            SignatureScheme::RSA_PSS_SHA384 if restrictions != TLSv12 => match self.algorithm {
+                include_bytes!("data/alg-rsa-encryption.der") => &s::RSA_PSS_2048_8192_SHA384,
                 _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
             },
             #[cfg(feature = "rsa")]
-            SignatureScheme::RSA_PSS_SHA512 => match self.algorithm {
-                include_bytes!("data/alg-rsa-encryption.der") =>
-                    &signature::RSA_PSS_2048_8192_SHA512,
+            SignatureScheme::RSA_PSS_SHA512 if restrictions != TLSv12 => match self.algorithm {
+                include_bytes!("data/alg-rsa-encryption.der") => &s::RSA_PSS_2048_8192_SHA512,
                 _ => return Err(Error::UnsupportedSignatureAlgorithmForPublicKey),
             },
             _ => return Err(Error::UnsupportedSignatureAlgorithm),
         };
-        Ok(signature::UnparsedPublicKey::new(algorithm, self.key))
+        Ok(s::UnparsedPublicKey::new(algorithm, self.key))
     }
 
     /// Get a [`signature::UnparsedPublicKey`] for this SubjectPublicKeyInfo
     pub fn get_public_key_x509(
         &self, algorithm_id: &[u8],
     ) -> Result<ring::signature::UnparsedPublicKey<&'a [u8]>, Error> {
-        self.public_key(parse_algorithmid(algorithm_id)?)
+        self.public_key(parse_algorithmid(algorithm_id)?, Restrictions::None)
     }
 }
 
@@ -141,7 +147,7 @@ pub fn parse_algorithmid(asn1: &[u8]) -> Result<SignatureScheme, Error> {
         include_bytes!("data/alg-rsa-pkcs1-sha256.der") => Ok(SignatureScheme::RSA_PKCS1_SHA256),
         include_bytes!("data/alg-rsa-pkcs1-sha384.der") => Ok(SignatureScheme::RSA_PKCS1_SHA384),
         include_bytes!("data/alg-rsa-pkcs1-sha512.der") => Ok(SignatureScheme::RSA_PKCS1_SHA512),
-        include_bytes!("data/alg-ecdsa-sha384.der") => Ok(SignatureScheme::ECDSA_NISTP256_SHA256),
+        include_bytes!("data/alg-ecdsa-sha256.der") => Ok(SignatureScheme::ECDSA_NISTP256_SHA256),
         include_bytes!("data/alg-ecdsa-sha384.der") => Ok(SignatureScheme::ECDSA_NISTP384_SHA384),
         include_bytes!("data/alg-ed25519.der") => Ok(SignatureScheme::ED25519),
         e if e.starts_with(&RSASSA_PSS_PREFIX[..]) => match &e[RSASSA_PSS_PREFIX.len()..] {
