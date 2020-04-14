@@ -127,6 +127,8 @@ pub enum Error {
     CertExpired,
     /// Certificate expired before beginning to be valid
     InvalidCertValidity,
+    /// The issuer is not known.
+    UnknownIssuer,
 }
 
 #[cfg(feature = "webpki")]
@@ -253,6 +255,14 @@ impl<'a> X509Certificate<'a> {
             self.tbs_certificate(),
             cert.signature(),
         )
+    }
+
+    /// As above, but also check that `self`’s issuer is `cert`’s subject.
+    pub fn check_issued_by(&self, cert: &X509Certificate<'_>) -> Result<(), Error> {
+        if self.issuer != cert.subject {
+            return Err(Error::UnknownIssuer);
+        }
+        self.check_signature_from(cert)
     }
 
     /// Check that this certificate is self-signed. This does not check that the
