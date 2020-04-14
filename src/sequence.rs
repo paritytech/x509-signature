@@ -24,7 +24,7 @@ impl<'a> SequenceIterator<'a> {
         }
     }
 
-    /// Iterate over the X.509 extensions.  The callback is expected to read the
+    /// Iterate over the X.509 sequences. The callback is expected to read the
     /// provided [`untrusted::Reader`] to the end; if it does not, or if the
     /// DER isn’t a sequence of sequences, `Err(error)` will be returned.
     pub fn iterate<
