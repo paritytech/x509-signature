@@ -2,6 +2,9 @@ use super::Error;
 use core::convert::TryInto;
 use ring::io::der;
 
+/// The largest timestamp that an ASN.1 GeneralizedTime can represent.
+pub const MAX_ASN1_TIMESTAMP: u64 = 253_402_300_799;
+
 macro_rules! convert_integers {
     ($($i: ident),*) => {
         $(let $i: u8 = $i.wrapping_sub(b'0'); { if $i > 9 { return Err( Error::BadDERTime) } })*

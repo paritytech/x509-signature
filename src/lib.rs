@@ -68,6 +68,8 @@ pub use das::DataAlgorithmSignature;
 pub use sequence::{ExtensionIterator, SequenceIterator};
 pub use spki::{parse_algorithmid, Restrictions, SubjectPublicKeyInfo};
 
+pub use time::MAX_ASN1_TIMESTAMP;
+
 #[cfg(feature = "rustls")]
 pub use r::SignatureScheme;
 
@@ -151,31 +153,40 @@ impl<'a> X509Certificate<'a> {
     /// The tbsCertificate, signatureAlgorithm, and signature
     pub fn das(&self) -> DataAlgorithmSignature<'a> { self.das }
 
-    /// The serial number. Big-endian and non-empty.
+    /// The serial number. Big-endian and non-empty. The first byte is
+    /// guaranteed to be non-zero.
     pub fn serial(&self) -> &'a [u8] { self.serial }
 
-    /// The X.509 issuer. This has not been validated and is not trusted.
+    /// The X.509 issuer. This has not been validated and is not trusted. In
+    /// particular, it is not guaranteed to be valid ASN.1 DER.
     pub fn issuer(&self) -> &'a [u8] { self.issuer }
 
     /// The earliest time, in seconds since the Unix epoch, that the certificate
     /// is valid. Certificates with `not_before` values before the Unix epoch
     /// are rejected.
+    ///
+    /// Will always be between 0 and [`MAX_ASN1_TIMESTAMP`], inclusive.
     pub fn not_before(&self) -> u64 { self.not_before }
 
     /// The latest time, in seconds since the Unix epoch, that the certificate
     /// is valid. Certificates with `not_after` values before the Unix epoch
     /// are rejected.
+    ///
+    /// Will always be between 0 and [`MAX_ASN1_TIMESTAMP`], inclusive.
     pub fn not_after(&self) -> u64 { self.not_after }
 
-    /// X.509 subject. This has not been validated and is not trusted.
+    /// X.509 subject. This has not been validated and is not trusted. In
+    /// particular, it is not guaranteed to be valid ASN.1 DER.
     pub fn subject(&self) -> &'a [u8] { self.subject }
 
-    /// The subjectPublicKeyInfo, in the format used by OpenSSL
+    /// The subjectPublicKeyInfo, encoded as ASN.1 DER. There is no guarantee
+    /// that the OID or public key are valid ASN.1 DER, but if they are not,
+    /// all methods that check signatures will fail.
     pub fn subject_public_key_info(&self) -> SubjectPublicKeyInfo<'a> {
         self.subject_public_key_info
     }
 
-    /// An iterator over the certificate’s extensions
+    /// An iterator over the certificate’s extensions.
     pub fn extensions(&self) -> ExtensionIterator<'a> { self.extensions }
 
     /// Verify a signature made by the certificate.
@@ -197,7 +208,9 @@ impl<'a> X509Certificate<'a> {
     ///   are not allowed.
     /// * RSA PKCS1.5 signatures are not allowed.
     ///
-    /// This is a good choice for new protocols and applications.
+    /// This is a good choice for new protocols and applications. Note that
+    /// extensions are not checked, so applications must process extensions
+    /// themselves.
     pub fn check_tls13_signature(
         &self, algorithm: SignatureScheme, message: &[u8], signature: &[u8],
     ) -> Result<(), Error> {
@@ -214,7 +227,9 @@ impl<'a> X509Certificate<'a> {
     ///
     /// * RSA-PSS signatures are not allowed.
     ///
-    /// This should not be used outside of a TLSv1.2 implementation.
+    /// This should not be used outside of a TLSv1.2 implementation. Note that
+    /// extensions are not checked, so applications must process extensions
+    /// themselves.
     pub fn check_tls12_signature(
         &self, algorithm: SignatureScheme, message: &[u8], signature: &[u8],
     ) -> Result<(), Error> {
