@@ -50,7 +50,7 @@ openssl ecparam -name prime256v1 > "$ecparams"
 
 openssl req \
    -x509 \
-   -newkey rsa-pss \
+   -newkey rsa \
    -batch \
    -days 3000 \
    -outform der \

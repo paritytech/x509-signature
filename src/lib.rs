@@ -268,7 +268,7 @@ impl<'a> X509Certificate<'a> {
         cert.check_signature(
             parse_algorithmid(self.signature_algorithm_id())?,
             self.tbs_certificate(),
-            cert.signature(),
+            self.signature(),
         )
     }
 
@@ -282,7 +282,12 @@ impl<'a> X509Certificate<'a> {
 
     /// Check that this certificate is self-signed. This does not check that the
     /// subject and issuer are equal.
+    #[deprecated(since = "0.3.3", note = "Use check_self_issued instead")]
     pub fn check_self_signature(&self) -> Result<(), Error> { self.check_signature_from(self) }
+
+    /// Check that this certificate is self-signed, and that the subject and
+    /// issuer are equal.
+    pub fn check_self_issued(&self) -> Result<(), Error> { self.check_issued_by(self) }
 }
 
 /// Extracts the algorithm id and public key from a certificate
@@ -356,14 +361,18 @@ mod tests {
         let forged_message = include_bytes!("../forged-message.txt");
         let message = include_bytes!("../gen-bad-cert.sh");
         let certificate = include_bytes!("../testing.crt");
+        #[cfg(feature = "rsa")]
+        let ca_certificate = include_bytes!("../ca.crt");
 
         let cert = parse_certificate(certificate).unwrap();
+        #[cfg(feature = "rsa")]
+        let ca_cert = parse_certificate(ca_certificate).unwrap();
         assert_eq!(
             cert.subject_public_key_info.algorithm(),
             include_bytes!("data/alg-ecdsa-p256.der")
         );
         assert_eq!(cert.subject_public_key_info.key().len(), 65);
-        cert.valid(1586128701).unwrap();
+        cert.valid(1587492766).unwrap();
         assert_eq!(cert.valid(0), Err(Error::CertNotValidYet));
         assert_eq!(cert.valid(u64::max_value()), Err(Error::CertExpired));
 
@@ -396,5 +405,9 @@ mod tests {
             .expect_err("forgery undetected?"),
             Error::InvalidSignatureForPublicKey
         );
+        #[cfg(feature = "rsa")]
+        ca_cert.check_self_issued().unwrap();
+        #[cfg(feature = "rsa")]
+        cert.check_issued_by(&ca_cert).unwrap();
     }
 }
