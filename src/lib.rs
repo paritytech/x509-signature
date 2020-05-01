@@ -29,7 +29,7 @@
 //! of *ring* that require heap allocation, specifically RSA.  x509-signature
 //! should never panic on any input.
 
-#![no_std]
+#![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![deny(
     const_err,
     deprecated,
@@ -68,7 +68,7 @@ pub use das::DataAlgorithmSignature;
 pub use sequence::{ExtensionIterator, SequenceIterator};
 pub use spki::{parse_algorithmid, Restrictions, SubjectPublicKeyInfo};
 
-pub use time::MAX_ASN1_TIMESTAMP;
+pub use time::{days_from_ymd, seconds_from_hms, ASN1Time, MAX_ASN1_TIMESTAMP, MIN_ASN1_TIMESTAMP};
 
 #[cfg(feature = "rustls")]
 pub use r::SignatureScheme;
@@ -142,11 +142,24 @@ pub struct X509Certificate<'a> {
     das: DataAlgorithmSignature<'a>,
     serial: &'a [u8],
     issuer: &'a [u8],
-    not_before: u64,
-    not_after: u64,
+    not_before: ASN1Time,
+    not_after: ASN1Time,
     subject: &'a [u8],
     subject_public_key_info: SubjectPublicKeyInfo<'a>,
     extensions: ExtensionIterator<'a>,
+}
+
+#[cfg(any())]
+pub fn convert_ymd(time: std::time::SystemTime) -> Result<i64, Error> {
+    match time.duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) =>
+            if d.as_secs() > MAX_ASN1_TIMESTAMP as u64 {
+                Ok(d.as_secs() as i64)
+            } else {
+                Err(Error::BadDERTime)
+            },
+        Err(d) => Ok(-(d.duration().as_secs() as i64)),
+    }
 }
 
 impl<'a> X509Certificate<'a> {
@@ -162,18 +175,18 @@ impl<'a> X509Certificate<'a> {
     pub fn issuer(&self) -> &'a [u8] { self.issuer }
 
     /// The earliest time, in seconds since the Unix epoch, that the certificate
-    /// is valid. Certificates with `not_before` values before the Unix epoch
-    /// are rejected.
+    /// is valid.
     ///
-    /// Will always be between 0 and [`MAX_ASN1_TIMESTAMP`], inclusive.
-    pub fn not_before(&self) -> u64 { self.not_before }
+    /// Will always be between [`MIN_ASN1_TIMESTAMP`] and
+    /// [`MAX_ASN1_TIMESTAMP`], inclusive.
+    pub fn not_before(&self) -> ASN1Time { self.not_before }
 
     /// The latest time, in seconds since the Unix epoch, that the certificate
-    /// is valid. Certificates with `not_after` values before the Unix epoch
-    /// are rejected.
+    /// is valid.
     ///
-    /// Will always be between 0 and [`MAX_ASN1_TIMESTAMP`], inclusive.
-    pub fn not_after(&self) -> u64 { self.not_after }
+    /// Will always be between [`MIN_ASN1_TIMESTAMP`] and
+    /// [`MAX_ASN1_TIMESTAMP`], inclusive.
+    pub fn not_after(&self) -> ASN1Time { self.not_after }
 
     /// X.509 subject. This has not been validated and is not trusted. In
     /// particular, it is not guaranteed to be valid ASN.1 DER.
@@ -241,16 +254,21 @@ impl<'a> X509Certificate<'a> {
         )
     }
 
-    /// Check that the certificate is valid at time `now`
-    pub fn valid(&self, now: u64) -> Result<(), Error> {
-        if now < self.not_before {
+    /// Check that the certificate is valid at time `now`, in seconds since the
+    /// Epoch.
+    pub fn valid_at_timestamp(&self, now: i64) -> Result<(), Error> {
+        if now < self.not_before.into() {
             Err(Error::CertNotValidYet)
-        } else if now > self.not_after {
+        } else if now > self.not_after.into() {
             Err(Error::CertExpired)
         } else {
             Ok(())
         }
     }
+
+    /// Check if a certificate is currently valid.
+    #[cfg(feature = "std")]
+    pub fn valid(&self) -> Result<(), Error> { self.valid_at_timestamp(ASN1Time::now()?.into()) }
 
     /// The tbsCertficate
     pub fn tbs_certificate(&self) -> &[u8] { self.das.data() }
@@ -372,9 +390,12 @@ mod tests {
             include_bytes!("data/alg-ecdsa-p256.der")
         );
         assert_eq!(cert.subject_public_key_info.key().len(), 65);
-        cert.valid(1587492766).unwrap();
-        assert_eq!(cert.valid(0), Err(Error::CertNotValidYet));
-        assert_eq!(cert.valid(u64::max_value()), Err(Error::CertExpired));
+        cert.valid_at_timestamp(1587492766).unwrap();
+        assert_eq!(cert.valid_at_timestamp(0), Err(Error::CertNotValidYet));
+        assert_eq!(
+            cert.valid_at_timestamp(i64::max_value()),
+            Err(Error::CertExpired)
+        );
 
         cert.check_signature(SignatureScheme::ECDSA_NISTP256_SHA256, message, signature)
             .expect("OpenSSL generates syntactically valid certificates");

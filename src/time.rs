@@ -2,8 +2,51 @@ use super::Error;
 use core::convert::TryInto;
 use ring::io::der;
 
+/// An ASN.1 timestamp.
+#[derive(Copy, Clone, Debug, Hash, Ord, PartialOrd, Eq, PartialEq)]
+pub struct ASN1Time(i64);
+
+impl From<ASN1Time> for i64 {
+    fn from(s: ASN1Time) -> i64 { s.0 }
+}
+
+#[cfg(feature = "std")]
+impl ASN1Time {
+    /// Gets the current time as an ASN1Time.
+    ///
+    /// Returns `Err` if the system clock is too far in the future to represent
+    /// as an ASN.1 time, or if it is too far before this library was
+    /// written.
+    pub fn now() -> Result<Self, Error> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| Error::BadDERTime)?
+            .as_secs();
+        if 1588297438 >= now || now > MAX_ASN1_TIMESTAMP as u64 {
+            Err(Error::BadDERTime)
+        } else {
+            Ok(Self(now as i64))
+        }
+    }
+}
+
+impl core::convert::TryFrom<i64> for ASN1Time {
+    type Error = Error;
+    fn try_from(s: i64) -> Result<Self, Error> {
+        if MIN_ASN1_TIMESTAMP <= s && s <= MAX_ASN1_TIMESTAMP {
+            Ok(Self(s))
+        } else {
+            Err(Error::BadDERTime)
+        }
+    }
+}
+
 /// The largest timestamp that an ASN.1 GeneralizedTime can represent.
-pub const MAX_ASN1_TIMESTAMP: u64 = 253_402_300_799;
+pub const MAX_ASN1_TIMESTAMP: i64 = 253_402_300_799;
+
+/// The smallest timestamp that an ASN.1 GeneralizedTime can represent.
+pub const MIN_ASN1_TIMESTAMP: i64 = -62_167_219_200;
 
 macro_rules! convert_integers {
     ($($i: ident),*) => {
@@ -25,7 +68,7 @@ macro_rules! collect {
 const UTC_TIME: u8 = der::Tag::UTCTime as _;
 const GENERALIZED_TIME: u8 = der::Tag::GeneralizedTime as _;
 
-pub(super) fn read_time(reader: &mut untrusted::Reader<'_>) -> Result<u64, Error> {
+pub(super) fn read_time(reader: &mut untrusted::Reader<'_>) -> Result<ASN1Time, Error> {
     let (tag, value) = der::read_tag_and_get_value(reader).map_err(|_| Error::BadDER)?;
     let (slice, month, day, hour, minute, second) = match *value.as_slice_less_safe() {
         [ref slice @ .., month1, month2, d1, d2, h1, h2, m1, m2, s1, s2, b'Z'] => {
@@ -47,11 +90,15 @@ pub(super) fn read_time(reader: &mut untrusted::Reader<'_>) -> Result<u64, Error
         (GENERALIZED_TIME, &[y1, y2, y3, y4]) => collect!(y1, y2, y3, y4).try_into().unwrap(),
         _ => return Err(Error::BadDER),
     };
-    Ok(86400 * u64::from(days_from_ymd(year, month, day)?)
-        + u64::from(seconds_from_hms(hour, minute, second)?))
+    Ok(ASN1Time(
+        86400 * i64::from(days_from_ymd(year, month, day)?)
+            + i64::from(seconds_from_hms(hour, minute, second)?),
+    ))
 }
 
-fn seconds_from_hms(hour: u8, minute: u8, second: u8) -> Result<u32, Error> {
+/// Convert an (hour, minute, second) tuple to a number of seconds since
+/// midnight or an error.
+pub fn seconds_from_hms(hour: u8, minute: u8, second: u8) -> Result<u32, Error> {
     if hour > 23 || minute > 59 || second > 59 {
         Err(Error::BadDERTime)
     } else {
@@ -65,9 +112,9 @@ fn seconds_from_hms(hour: u8, minute: u8, second: u8) -> Result<u32, Error> {
 ///   only possible inputs are (0, 0, 0) to (9999, 99, 99) inclusive, and we can
 ///   (and do) test every single one of them in a reasonable amount of time.
 /// * It avoids an unnecessary dependency, and thus prevents bloat.
-fn days_from_ymd(year: u16, month: u8, day: u8) -> Result<u32, Error> {
+pub fn days_from_ymd(year: u16, month: u8, day: u8) -> Result<i32, Error> {
     const DAYS_IN_MONTH: [u8; 12] = [31, 0, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    if year < 1970 || month < 1 || month > 12 || day < 1 {
+    if month < 1 || month > 12 || day < 1 {
         return Err(Error::BadDERTime);
     }
     if if month == 2 {
@@ -83,12 +130,12 @@ fn days_from_ymd(year: u16, month: u8, day: u8) -> Result<u32, Error> {
     // Public domain
     let year: i32 = i32::from(year) - i32::from(month <= 2);
     let era: i32 = if year >= 0 { year } else { year - 399 } / 400;
-    let yoe: u32 = (year - era * 400) as _;
+    let yoe: i32 = year - era * 400;
     let months_since_feb = if month > 2 { month - 3 } else { month + 9 };
     // This is magic, but the unit-tests prove that it is correct.
-    let doy: u32 = (153 * months_since_feb as u32 + 2) / 5 + u32::from(day) - 1;
-    let doe: u32 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    Ok((era * 146097 + doe as i32 - 719468) as u32)
+    let doy: i32 = (153 * months_since_feb as i32 + 2) / 5 + i32::from(day) - 1;
+    let doe: i32 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Ok(era * 146097 + doe - 719468)
 }
 
 #[cfg(test)]
@@ -127,21 +174,17 @@ mod tests {
 
     #[test]
     fn days_from_ymd_works() {
-        let mut last_day = u32::max_value();
+        let mut last_day = -719529i32;
         for year in 0u16..10000 {
             for month in 0u8..100 {
                 for day in 0u8..100 {
                     let days_since_epoch = days_from_ymd(year, month, day);
-                    if year < 1970 {
-                        assert!(days_since_epoch.is_err());
-                        continue;
-                    }
                     match Utc.ymd_opt(year.into(), month.into(), day.into()) {
                         LocalResult::None => assert!(days_since_epoch.is_err()),
                         LocalResult::Single(e) => {
                             let this_day = days_since_epoch.unwrap();
                             assert_eq!(this_day, last_day.wrapping_add(1));
-                            assert!(this_day < i32::max_value() as u32);
+                            assert!(this_day < i32::max_value());
                             last_day = this_day;
                             assert_eq!(
                                 e.and_hms(0, 0, 0).timestamp(),
@@ -162,7 +205,9 @@ mod tests {
     macro_rules! input_test {
         ($b: expr, $cmp: expr) => {
             assert_eq!(
-                untrusted::Input::from($b).read_all(Error::CertExpired, read_time),
+                untrusted::Input::from($b)
+                    .read_all(Error::CertExpired, read_time)
+                    .map(i64::from),
                 $cmp
             )
         };
@@ -177,7 +222,7 @@ mod tests {
             .read_all(Error::CertExpired, read_time);
         assert_eq!(too_short_generalized, Err(Error::BadDER));
         assert!(253402300799u64.leading_zeros() > 25);
-        input_test!(b"\x18\x0f99991231235959Z", Ok(253402300799));
+        input_test!(b"\x18\x0f99991231235959Z", Ok(MAX_ASN1_TIMESTAMP));
         input_test!(b"\x18\x0f:9991231235959Z", Err(Error::BadDERTime));
         input_test!(b"\x18\x0f9:991231235959Z", Err(Error::BadDERTime));
         input_test!(b"\x18\x0f99:91231235959Z", Err(Error::BadDERTime));
@@ -200,11 +245,12 @@ mod tests {
         input_test!(b"\x18\x0f99990431235959Z", Err(Error::BadDERTime));
         input_test!(b"\x18\x0f99990229235959Z", Err(Error::BadDERTime));
         input_test!(b"\x18\x0d960229235959Z", Err(Error::BadDER));
-        input_test!(b"\x18\x0f19600229235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x18\x0f19600229235959Z", Ok(-310435201));
         input_test!(b"\x17\x0d490229235959Z", Err(Error::BadDERTime));
         input_test!(b"\x17\x0d490228235959Z", Ok(2498169599));
-        input_test!(b"\x17\x0d500228235959Z", Err(Error::BadDERTime));
+        input_test!(b"\x17\x0d500228235959Z", Ok(-626054401));
         input_test!(b"\x18\x0f19960229235959Z", Ok(825638399));
+        input_test!(b"\x18\x0f00000101000000Z", Ok(MIN_ASN1_TIMESTAMP));
         input_test!(b"\x17\x0d960229235959Z", Ok(825638399));
         input_test!(b"\x18\x0f99960229235959Z", Ok(253281254399));
         input_test!(b"\x18\x0e99960229235959Z", Err(Error::BadDERTime));
