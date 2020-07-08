@@ -1,5 +1,4 @@
 use super::Error;
-use core::convert::TryInto;
 use ring::io::der;
 
 /// An ASN.1 timestamp.
@@ -87,7 +86,7 @@ pub(super) fn read_time(reader: &mut untrusted::Reader<'_>) -> Result<ASN1Time, 
             let year = collect!(y1, y2);
             (if year > 49 { 1900 } else { 2000u16 }) + u16::from(year)
         },
-        (GENERALIZED_TIME, &[y1, y2, y3, y4]) => collect!(y1, y2, y3, y4).try_into().unwrap(),
+        (GENERALIZED_TIME, &[y1, y2, y3, y4]) => collect!(y1, y2, y3, y4),
         _ => return Err(Error::BadDER),
     };
     Ok(ASN1Time(

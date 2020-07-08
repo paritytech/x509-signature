@@ -1,21 +1,21 @@
 [package]
 name = "x509-signature"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
 description = "Low-level X.509 parsing and signature verification library"
 repository = "https://github.com/paritytech/x509-signature"
-keywords = ["X509", "ASN1", "cryptography"]
+keywords = ["X509", "ASN1", "cryptography", "pki"]
 
 [dependencies]
-ring = { version = "0.16.12", default-features = false }
-untrusted = "0.7.0"
-w = { package = "webpki", version = "0.21.2", optional = true, default-features = false }
-r = { package = "rustls", version = "0.17.0", optional = true }
+ring = { version = "0.16.15", default-features = false }
+untrusted = "0.7.1"
+w = { package = "webpki", version = "0.21.3", optional = true, default-features = false }
+r = { package = "rustls", version = "0.18.0", optional = true }
 
 [dev-dependencies]
-chrono = "0.4.11"
+chrono = "0.4.13"
 
 [features]
 default = ["rsa"]

@@ -149,19 +149,6 @@ pub struct X509Certificate<'a> {
     extensions: ExtensionIterator<'a>,
 }
 
-#[cfg(any())]
-pub fn convert_ymd(time: std::time::SystemTime) -> Result<i64, Error> {
-    match time.duration_since(std::time::UNIX_EPOCH) {
-        Ok(d) =>
-            if d.as_secs() > MAX_ASN1_TIMESTAMP as u64 {
-                Ok(d.as_secs() as i64)
-            } else {
-                Err(Error::BadDERTime)
-            },
-        Err(d) => Ok(-(d.duration().as_secs() as i64)),
-    }
-}
-
 impl<'a> X509Certificate<'a> {
     /// The tbsCertificate, signatureAlgorithm, and signature
     pub fn das(&self) -> DataAlgorithmSignature<'a> { self.das }
