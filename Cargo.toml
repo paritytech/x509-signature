@@ -12,7 +12,7 @@ keywords = ["X509", "ASN1", "cryptography", "pki"]
 ring = { version = "0.16.15", default-features = false }
 untrusted = "0.7.1"
 w = { package = "webpki", version = "0.21.3", optional = true, default-features = false }
-r = { package = "rustls", version = "0.18.0", optional = true }
+r = { package = "rustls", version = "0.19", optional = true }
 
 [dev-dependencies]
 chrono = "0.4.13"
