@@ -54,7 +54,7 @@
 #![forbid(
     unconditional_recursion,
     unsafe_code,
-    intra_doc_link_resolution_failure,
+    broken_intra_doc_links,
     while_true,
     elided_lifetimes_in_paths
 )]
