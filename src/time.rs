@@ -113,7 +113,7 @@ pub fn seconds_from_hms(hour: u8, minute: u8, second: u8) -> Result<u32, Error> 
 /// * It avoids an unnecessary dependency, and thus prevents bloat.
 pub fn days_from_ymd(year: u16, month: u8, day: u8) -> Result<i32, Error> {
     const DAYS_IN_MONTH: [u8; 12] = [31, 0, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    if month < 1 || month > 12 || day < 1 {
+    if !(1..=12).contains(&month) || day < 1 {
         return Err(Error::BadDERTime);
     }
     if if month == 2 {
