@@ -47,23 +47,23 @@ impl<'a> ExtensionIterator<'a> {
     pub fn iterate<T: FnMut(&'a [u8], bool, untrusted::Input<'a>) -> Result<(), Error>>(
         &self, cb: &mut T,
     ) -> Result<(), Error> {
-        self.0.iterate(Error::BadDer, &mut |input| {
+        self.0.iterate(Error::BadDER, &mut |input| {
             let oid =
-                der::expect_tag_and_get_value(input, der::Tag::OID).map_err(|_| Error::BadDer)?;
+                der::expect_tag_and_get_value(input, der::Tag::OID).map_err(|_| Error::BadDER)?;
             let mut critical = false;
             if input.peek(der::Tag::Boolean as _) {
                 critical = match input
                     .read_bytes(3)
-                    .map_err(|_| Error::BadDer)?
+                    .map_err(|_| Error::BadDER)?
                     .as_slice_less_safe()
                 {
                     b"\x01\x01\xFF" => true,
                     b"\x01\x01\0" => false,
-                    _ => return Err(Error::BadDer),
+                    _ => return Err(Error::BadDER),
                 }
             }
             let value = der::expect_tag_and_get_value(input, der::Tag::OctetString)
-                .map_err(|_| Error::BadDer)?;
+                .map_err(|_| Error::BadDER)?;
             cb(oid.as_slice_less_safe(), critical, value)
         })
     }
