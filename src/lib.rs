@@ -120,9 +120,9 @@ pub enum Error {
     /// Signature algorithms don’t match
     SignatureAlgorithmMismatch,
     /// Invalid DER
-    BadDER,
+    BadDer,
     /// Invalid DER time
-    BadDERTime,
+    BadDerTime,
     /// Certificate isn’t valid yet
     CertNotValidYet,
     /// Certificate has expired
@@ -299,16 +299,16 @@ impl<'a> X509Certificate<'a> {
 pub fn parse_certificate(certificate: &[u8]) -> Result<X509Certificate<'_>, Error> {
     use core::convert::TryFrom as _;
     let das = DataAlgorithmSignature::try_from(certificate)?;
-    untrusted::Input::from(&*das.inner()).read_all(Error::BadDER, |input| {
+    untrusted::Input::from(&*das.inner()).read_all(Error::BadDer, |input| {
         // We require extensions, which means we require version 3
-        if input.read_bytes(5).map_err(|_| Error::BadDER)?
+        if input.read_bytes(5).map_err(|_| Error::BadDer)?
             != untrusted::Input::from(&[160, 3, 2, 1, 2])
         {
             return Err(Error::UnsupportedCertVersion);
         }
         // serialNumber
         let serial = der::positive_integer(input)
-            .map_err(|_| Error::BadDER)?
+            .map_err(|_| Error::BadDer)?
             .big_endian_without_leading_zero();
         // signature
         if das::read_sequence(input)?.as_slice_less_safe() != das.algorithm() {
@@ -319,7 +319,7 @@ pub fn parse_certificate(certificate: &[u8]) -> Result<X509Certificate<'_>, Erro
         let issuer = das::read_sequence(input)?.as_slice_less_safe();
         // validity
         let (not_before, not_after) =
-            der::nested(input, der::Tag::Sequence, Error::BadDER, |input| {
+            der::nested(input, der::Tag::Sequence, Error::BadDer, |input| {
                 Ok((time::read_time(input)?, time::read_time(input)?))
             })?;
         if not_before > not_after {
@@ -331,10 +331,10 @@ pub fn parse_certificate(certificate: &[u8]) -> Result<X509Certificate<'_>, Erro
 
         let extensions = if !input.at_end() {
             let tag = der::Tag::ContextSpecificConstructed3;
-            der::nested(input, tag, Error::BadDER, |input| {
-                der::nested(input, der::Tag::Sequence, Error::BadDER, |input| {
+            der::nested(input, tag, Error::BadDer, |input| {
+                der::nested(input, der::Tag::Sequence, Error::BadDer, |input| {
                     if input.at_end() {
-                        return Err(Error::BadDER);
+                        return Err(Error::BadDer);
                     }
                     Ok(ExtensionIterator(SequenceIterator::read(input)))
                 })
