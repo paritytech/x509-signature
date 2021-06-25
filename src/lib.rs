@@ -54,7 +54,7 @@
 #![forbid(
     unconditional_recursion,
     unsafe_code,
-    intra_doc_link_resolution_failure,
+    broken_intra_doc_links,
     while_true,
     elided_lifetimes_in_paths
 )]
@@ -296,7 +296,7 @@ impl<'a> X509Certificate<'a> {
 }
 
 /// Extracts the algorithm id and public key from a certificate
-pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a>, Error> {
+pub fn parse_certificate(certificate: &[u8]) -> Result<X509Certificate<'_>, Error> {
     use core::convert::TryFrom as _;
     let das = DataAlgorithmSignature::try_from(certificate)?;
     untrusted::Input::from(&*das.inner()).read_all(Error::BadDER, |input| {
@@ -346,10 +346,10 @@ pub fn parse_certificate<'a>(certificate: &'a [u8]) -> Result<X509Certificate<'a
         Ok(X509Certificate {
             das,
             serial,
-            subject,
+            issuer,
             not_before,
             not_after,
-            issuer,
+            subject,
             subject_public_key_info,
             extensions,
         })
